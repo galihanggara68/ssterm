@@ -562,6 +562,22 @@ func TestBuiltinThemes(t *testing.T) {
 		})
 	}
 
+	// Space-separated display names from the spec ("default dark", "macOS Terminal", etc.) resolve too.
+	for _, displayName := range []string{"default dark", "default light", "macOS Terminal", "iTerm2", "GNOME", "Windows Terminal"} {
+		if _, stderr, code := run(t, "x\n", "--theme", displayName); code != 0 {
+			t.Errorf("display name %q failed: code=%d stderr=%s", displayName, code, stderr)
+		}
+	}
+
+	// Built-in theme applies to PNG output as well.
+	lightImg, _ := runPNG(t, "\x1b[31mM\n", "--theme", "light")
+	if got := color.NRGBAModel.Convert(lightImg.At(0, 0)).(color.NRGBA); got != (color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}) {
+		t.Fatalf("light theme PNG bg pixel = %#v, want #ffffff", got)
+	}
+	if cellColors(lightImg, 0, 0)[color.NRGBA{R: 0xc8, G: 0x28, B: 0x29, A: 0xff}] == 0 {
+		t.Fatalf("light theme PNG missing red #c82829: %v", cellColors(lightImg, 0, 0))
+	}
+
 	_, stderr, code := run(t, "x\n", "--theme", "nonexistent")
 	if code == 0 {
 		t.Fatalf("expected non-zero exit code for unknown theme")
@@ -678,6 +694,26 @@ func TestThemeJSONFileAndValidation(t *testing.T) {
 			}`,
 			wantField: "chrome.buttons[1]",
 		},
+		{
+			name: "null bold_as_bright rejected",
+			json: `{
+				"foreground": "#ffffff",
+				"background": "#000000",
+				"bold_as_bright": null,
+				"ansi": ["#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000"]
+			}`,
+			wantField: "bold_as_bright",
+		},
+		{
+			name: "null chrome rejected",
+			json: `{
+				"foreground": "#ffffff",
+				"background": "#000000",
+				"chrome": null,
+				"ansi": ["#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000"]
+			}`,
+			wantField: "chrome",
+		},
 	}
 
 	for i, tc := range invalidCases {
@@ -705,7 +741,7 @@ func TestThemeJSONFileAndValidation(t *testing.T) {
 	}
 }
 
-func TestPTYRunsCommandWithTTYAndCapturesFinalScreen(t *testing.T) {
+func TestPTYRunsCommandWithTTYAndRendersFinalScreen(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("PTY mode is not supported on Windows")
 	}
@@ -721,6 +757,15 @@ func TestPTYRunsCommandWithTTYAndCapturesFinalScreen(t *testing.T) {
 	}
 	if !strings.Contains(out, `width="720" height="432"`) {
 		t.Fatalf("expected 80x24 default PTY size (720x432), got:\n%s", out)
+	}
+
+	// PTY mode renders only the final Screen grid at exit (not scrolled-off lines).
+	out, stderr, code = run(t, "", "--cols", "10", "--rows", "2", "--", "sh", "-c", `printf "1\n2\n3"` )
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %q)", code, stderr)
+	}
+	if got := svgTexts(t, out); !slices.Equal(got, []string{"2", "3"}) {
+		t.Fatalf("texts = %q, want [2 3]", got)
 	}
 }
 

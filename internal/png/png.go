@@ -119,21 +119,23 @@ func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte
 	for row := 0; row < totalRows; row++ {
 		y0 := row * cellH
 		baseline := y0 + cellH - 5
+		// Pass 1: draw all non-default cell backgrounds in the row.
 		for col := 0; col < cols; {
-			var c emulator.Cell
-			if row < sb {
-				c = e.ScrollbackCell(row, col)
-			} else {
-				c = e.Cell(row-sb, col)
+			c := cellAt(e, row, col, sb)
+			cw := max(c.Width, 1)
+			_, bg := resolveColors(th, c, defFg, defBg)
+			if bg != defBg {
+				x0 := col * cellW
+				draw.Draw(img, image.Rect(x0, y0, x0+cw*cellW, y0+cellH), &image.Uniform{C: bg}, image.Point{}, draw.Src)
 			}
+			col += cw
+		}
+		// Pass 2: draw glyphs and text decorations on top of row backgrounds.
+		for col := 0; col < cols; {
+			c := cellAt(e, row, col, sb)
 			cw := max(c.Width, 1)
 			x0 := col * cellW
-			cellRect := image.Rect(x0, y0, x0+cw*cellW, y0+cellH)
-
-			fg, bg := resolveColors(th, c, defFg, defBg)
-			if bg != defBg {
-				draw.Draw(img, cellRect, &image.Uniform{C: bg}, image.Point{}, draw.Src)
-			}
+			fg, _ := resolveColors(th, c, defFg, defBg)
 
 			if c.Text != "" && c.Text != " " {
 				idx := 0
@@ -168,6 +170,13 @@ func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte
 	var buf bytes.Buffer
 	_ = stdpng.Encode(&buf, img)
 	return buf.Bytes()
+}
+
+func cellAt(e emulator.Emulator, row, col, sb int) emulator.Cell {
+	if row < sb {
+		return e.ScrollbackCell(row, col)
+	}
+	return e.Cell(row-sb, col)
 }
 
 func resolveColors(th theme.Theme, c emulator.Cell, defFg, defBg color.RGBA) (fg, bg color.RGBA) {

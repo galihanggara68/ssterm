@@ -1,7 +1,13 @@
 // Package source reads terminal output from piped stdin or a pseudo-terminal.
 package source
 
-import "github.com/charmbracelet/x/term"
+import (
+	"bytes"
+	"errors"
+	"io"
+
+	"github.com/charmbracelet/x/term"
+)
 
 const (
 	// DefaultCols and DefaultRows are the fallback PTY dimensions when no
@@ -9,6 +15,25 @@ const (
 	DefaultCols = 80
 	DefaultRows = 24
 )
+
+// ErrEmptyStdin is returned when piped stdin has zero bytes.
+var ErrEmptyStdin = errors.New("empty stdin")
+
+// ReadStdin reads all bytes from piped stdin and normalizes line endings for
+// terminal emulation.
+func ReadStdin(r io.Reader) ([]byte, error) {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) == 0 {
+		return nil, ErrEmptyStdin
+	}
+	data = bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
+	data = bytes.TrimSuffix(data, []byte("\n"))
+	data = bytes.ReplaceAll(data, []byte("\n"), []byte("\r\n"))
+	return data, nil
+}
 
 type fdProvider interface {
 	Fd() uintptr

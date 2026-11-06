@@ -2,6 +2,7 @@
 package theme
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,9 +10,9 @@ import (
 	"strings"
 )
 
-// ChromeStyle defines the window decoration (title bar and buttons) for a Theme.
-type ChromeStyle struct {
-	Style      string    `json:"style,omitempty"`
+// Chrome defines the Chrome (title bar and buttons) for a Theme.
+type Chrome struct {
+	Layout     string    `json:"style,omitempty"`
 	Background string    `json:"background,omitempty"`
 	Foreground string    `json:"foreground,omitempty"`
 	Buttons    [3]string `json:"buttons,omitempty"`
@@ -26,8 +27,8 @@ type Theme struct {
 	ANSI [16]string `json:"ansi"`
 	// BoldAsBright renders bold text in colors 0-7 with the bright 8-15 colors.
 	BoldAsBright bool `json:"bold_as_bright"`
-	// Chrome defines the window frame style used when --chrome is enabled.
-	Chrome ChromeStyle `json:"chrome,omitempty"`
+	// Chrome defines the Chrome drawn when --chrome is enabled.
+	Chrome Chrome `json:"chrome,omitempty"`
 }
 
 var builtins = []Theme{
@@ -38,8 +39,8 @@ var builtins = []Theme{
 			"#969896", "#d54e53", "#b9ca4a", "#e7c547", "#7aa6da", "#c397d8", "#70c0b1", "#eaeaea",
 		},
 		BoldAsBright: true,
-		Chrome: ChromeStyle{
-			Style:      "macos",
+		Chrome: Chrome{
+			Layout:     "macos",
 			Background: "#2d2f31",
 			Foreground: "#c5c8c6",
 			Buttons:    [3]string{"#ff5f56", "#ffbd2e", "#27c93f"},
@@ -52,8 +53,8 @@ var builtins = []Theme{
 			"#969896", "#d54e53", "#b9ca4a", "#e7c547", "#7aa6da", "#c397d8", "#70c0b1", "#ffffff",
 		},
 		BoldAsBright: false,
-		Chrome: ChromeStyle{
-			Style:      "macos",
+		Chrome: Chrome{
+			Layout:     "macos",
 			Background: "#e8e8e8",
 			Foreground: "#4d4d4c",
 			Buttons:    [3]string{"#ff5f56", "#ffbd2e", "#27c93f"},
@@ -66,8 +67,8 @@ var builtins = []Theme{
 			"#666666", "#e50000", "#00d900", "#e5e500", "#0000ff", "#e500e5", "#00e5e5", "#e5e5e5",
 		},
 		BoldAsBright: true,
-		Chrome: ChromeStyle{
-			Style:      "macos",
+		Chrome: Chrome{
+			Layout:     "macos",
 			Background: "#e5e5e5",
 			Foreground: "#333333",
 			Buttons:    [3]string{"#ff5f56", "#ffbd2e", "#27c93f"},
@@ -80,8 +81,8 @@ var builtins = []Theme{
 			"#686868", "#ff6e67", "#5ffa68", "#fffc67", "#6871ff", "#ff77ff", "#60fdff", "#ffffff",
 		},
 		BoldAsBright: true,
-		Chrome: ChromeStyle{
-			Style:      "macos",
+		Chrome: Chrome{
+			Layout:     "macos",
 			Background: "#323232",
 			Foreground: "#c7c7c7",
 			Buttons:    [3]string{"#ff5f56", "#ffbd2e", "#27c93f"},
@@ -94,8 +95,8 @@ var builtins = []Theme{
 			"#555753", "#ef2929", "#8ae234", "#fce94f", "#729fcf", "#ad7fa8", "#34e2e2", "#eeeeec",
 		},
 		BoldAsBright: false,
-		Chrome: ChromeStyle{
-			Style:      "gnome",
+		Chrome: Chrome{
+			Layout:     "gnome",
 			Background: "#303030",
 			Foreground: "#eeeeec",
 			Buttons:    [3]string{"#4a4a4a", "#4a4a4a", "#cc0000"},
@@ -108,8 +109,8 @@ var builtins = []Theme{
 			"#767676", "#e74856", "#16c60c", "#f9f1a5", "#3b78ff", "#b4009e", "#61d6d6", "#f2f2f2",
 		},
 		BoldAsBright: true,
-		Chrome: ChromeStyle{
-			Style:      "windows",
+		Chrome: Chrome{
+			Layout:     "windows",
 			Background: "#1f1f1f",
 			Foreground: "#cccccc",
 			Buttons:    [3]string{"#cccccc", "#cccccc", "#e81123"},
@@ -132,7 +133,7 @@ func Default() Theme {
 
 // Lookup returns the Theme with the given name.
 func Lookup(name string) (Theme, bool) {
-	key := strings.ToLower(strings.TrimSpace(name))
+	key := strings.Join(strings.Fields(strings.ToLower(name)), "-")
 	if canon, ok := aliases[key]; ok {
 		key = canon
 	}
@@ -154,16 +155,13 @@ func Names() []string {
 }
 
 // Resolve looks up a built-in Theme by name, or loads a JSON Theme file when
-// spec ends with ".json", contains a path separator, or names an existing file.
+// spec ends with ".json" or contains a path separator.
 func Resolve(spec string) (Theme, error) {
 	if isFilePath(spec) {
 		return LoadFile(spec)
 	}
 	if t, ok := Lookup(spec); ok {
 		return t, nil
-	}
-	if _, err := os.Stat(spec); err == nil {
-		return LoadFile(spec)
 	}
 	return Theme{}, fmt.Errorf("unknown theme %q (valid themes: %s)", spec, strings.Join(Names(), ", "))
 }
@@ -182,28 +180,14 @@ func LoadFile(path string) (Theme, error) {
 	if err != nil {
 		return Theme{}, err
 	}
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return Theme{}, fmt.Errorf("theme %s: invalid JSON: %w", path, err)
-	}
-
-	known := map[string]bool{
-		"name":           true,
-		"foreground":     true,
-		"background":     true,
-		"ansi":           true,
-		"bold_as_bright": true,
-		"chrome":         true,
-	}
-	for k := range raw {
-		if !known[k] {
-			return Theme{}, fmt.Errorf("theme %s: unknown field %q", path, k)
-		}
+	raw, err := parseObjectKeys(path, "", data, "name", "foreground", "background", "ansi", "bold_as_bright", "chrome")
+	if err != nil {
+		return Theme{}, err
 	}
 
 	var t Theme
 	if v, ok := raw["name"]; ok {
-		if err := json.Unmarshal(v, &t.Name); err != nil {
+		if isJSONNull(v) || json.Unmarshal(v, &t.Name) != nil {
 			return Theme{}, fmt.Errorf("theme %s: invalid field \"name\": expected string", path)
 		}
 	}
@@ -212,20 +196,11 @@ func LoadFile(path string) (Theme, error) {
 		t.Name = strings.TrimSuffix(base, filepath.Ext(base))
 	}
 
-	fgRaw, ok := raw["foreground"]
-	if !ok {
-		return Theme{}, fmt.Errorf("theme %s: missing required field \"foreground\"", path)
+	if t.Foreground, err = requireHexField(path, raw, "foreground"); err != nil {
+		return Theme{}, err
 	}
-	if err := json.Unmarshal(fgRaw, &t.Foreground); err != nil || !isValidHexColor(t.Foreground) {
-		return Theme{}, fmt.Errorf("theme %s: invalid field \"foreground\": expected #RRGGBB hex color", path)
-	}
-
-	bgRaw, ok := raw["background"]
-	if !ok {
-		return Theme{}, fmt.Errorf("theme %s: missing required field \"background\"", path)
-	}
-	if err := json.Unmarshal(bgRaw, &t.Background); err != nil || !isValidHexColor(t.Background) {
-		return Theme{}, fmt.Errorf("theme %s: invalid field \"background\": expected #RRGGBB hex color", path)
+	if t.Background, err = requireHexField(path, raw, "background"); err != nil {
+		return Theme{}, err
 	}
 
 	ansiRaw, ok := raw["ansi"]
@@ -233,19 +208,19 @@ func LoadFile(path string) (Theme, error) {
 		return Theme{}, fmt.Errorf("theme %s: missing required field \"ansi\"", path)
 	}
 	var ansiElems []json.RawMessage
-	if err := json.Unmarshal(ansiRaw, &ansiElems); err != nil || len(ansiElems) != 16 {
+	if isJSONNull(ansiRaw) || json.Unmarshal(ansiRaw, &ansiElems) != nil || len(ansiElems) != 16 {
 		return Theme{}, fmt.Errorf("theme %s: invalid field \"ansi\": expected array of 16 #RRGGBB hex colors", path)
 	}
 	for i, elem := range ansiElems {
-		var c string
-		if err := json.Unmarshal(elem, &c); err != nil || !isValidHexColor(c) {
-			return Theme{}, fmt.Errorf("theme %s: invalid field \"ansi[%d]\": expected #RRGGBB hex color", path, i)
+		c, err := parseHexValue(path, fmt.Sprintf("ansi[%d]", i), elem)
+		if err != nil {
+			return Theme{}, err
 		}
 		t.ANSI[i] = c
 	}
 
 	if v, ok := raw["bold_as_bright"]; ok {
-		if err := json.Unmarshal(v, &t.BoldAsBright); err != nil {
+		if isJSONNull(v) || json.Unmarshal(v, &t.BoldAsBright) != nil {
 			return Theme{}, fmt.Errorf("theme %s: invalid field \"bold_as_bright\": expected boolean", path)
 		}
 	}
@@ -262,52 +237,91 @@ func LoadFile(path string) (Theme, error) {
 	return t, nil
 }
 
-func parseChrome(path string, data json.RawMessage) (ChromeStyle, error) {
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return ChromeStyle{}, fmt.Errorf("theme %s: invalid field \"chrome\": expected object", path)
-	}
-	known := map[string]bool{
-		"style":      true,
-		"background": true,
-		"foreground": true,
-		"buttons":    true,
-	}
-	for k := range raw {
-		if !known[k] {
-			return ChromeStyle{}, fmt.Errorf("theme %s: unknown field \"chrome.%s\"", path, k)
-		}
+func parseChrome(path string, data json.RawMessage) (Chrome, error) {
+	raw, err := parseObjectKeys(path, "chrome", data, "style", "background", "foreground", "buttons")
+	if err != nil {
+		return Chrome{}, err
 	}
 	c := Default().Chrome
 	if v, ok := raw["style"]; ok {
-		if err := json.Unmarshal(v, &c.Style); err != nil || c.Style == "" {
-			return ChromeStyle{}, fmt.Errorf("theme %s: invalid field \"chrome.style\": expected non-empty string", path)
+		if isJSONNull(v) || json.Unmarshal(v, &c.Layout) != nil || c.Layout == "" {
+			return Chrome{}, fmt.Errorf("theme %s: invalid field \"chrome.style\": expected non-empty string", path)
 		}
 	}
 	if v, ok := raw["background"]; ok {
-		if err := json.Unmarshal(v, &c.Background); err != nil || !isValidHexColor(c.Background) {
-			return ChromeStyle{}, fmt.Errorf("theme %s: invalid field \"chrome.background\": expected #RRGGBB hex color", path)
+		if c.Background, err = parseHexValue(path, "chrome.background", v); err != nil {
+			return Chrome{}, err
 		}
 	}
 	if v, ok := raw["foreground"]; ok {
-		if err := json.Unmarshal(v, &c.Foreground); err != nil || !isValidHexColor(c.Foreground) {
-			return ChromeStyle{}, fmt.Errorf("theme %s: invalid field \"chrome.foreground\": expected #RRGGBB hex color", path)
+		if c.Foreground, err = parseHexValue(path, "chrome.foreground", v); err != nil {
+			return Chrome{}, err
 		}
 	}
 	if v, ok := raw["buttons"]; ok {
 		var elems []json.RawMessage
-		if err := json.Unmarshal(v, &elems); err != nil || len(elems) != 3 {
-			return ChromeStyle{}, fmt.Errorf("theme %s: invalid field \"chrome.buttons\": expected array of 3 #RRGGBB hex colors", path)
+		if isJSONNull(v) || json.Unmarshal(v, &elems) != nil || len(elems) != 3 {
+			return Chrome{}, fmt.Errorf("theme %s: invalid field \"chrome.buttons\": expected array of 3 #RRGGBB hex colors", path)
 		}
 		for i, elem := range elems {
-			var b string
-			if err := json.Unmarshal(elem, &b); err != nil || !isValidHexColor(b) {
-				return ChromeStyle{}, fmt.Errorf("theme %s: invalid field \"chrome.buttons[%d]\": expected #RRGGBB hex color", path, i)
+			b, err := parseHexValue(path, fmt.Sprintf("chrome.buttons[%d]", i), elem)
+			if err != nil {
+				return Chrome{}, err
 			}
 			c.Buttons[i] = b
 		}
 	}
 	return c, nil
+}
+
+func parseObjectKeys(path, prefix string, data []byte, allowed ...string) (map[string]json.RawMessage, error) {
+	if isJSONNull(data) {
+		if prefix != "" {
+			return nil, fmt.Errorf("theme %s: invalid field %q: expected object", path, prefix)
+		}
+		return nil, fmt.Errorf("theme %s: invalid JSON: expected object", path)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		if prefix != "" {
+			return nil, fmt.Errorf("theme %s: invalid field %q: expected object", path, prefix)
+		}
+		return nil, fmt.Errorf("theme %s: invalid JSON: %w", path, err)
+	}
+	known := make(map[string]bool, len(allowed))
+	for _, k := range allowed {
+		known[k] = true
+	}
+	for k := range raw {
+		if !known[k] {
+			field := k
+			if prefix != "" {
+				field = prefix + "." + k
+			}
+			return nil, fmt.Errorf("theme %s: unknown field %q", path, field)
+		}
+	}
+	return raw, nil
+}
+
+func requireHexField(path string, raw map[string]json.RawMessage, field string) (string, error) {
+	v, ok := raw[field]
+	if !ok {
+		return "", fmt.Errorf("theme %s: missing required field %q", path, field)
+	}
+	return parseHexValue(path, field, v)
+}
+
+func parseHexValue(path, field string, raw json.RawMessage) (string, error) {
+	var s string
+	if isJSONNull(raw) || json.Unmarshal(raw, &s) != nil || !isValidHexColor(s) {
+		return "", fmt.Errorf("theme %s: invalid field %q: expected #RRGGBB hex color", path, field)
+	}
+	return s, nil
+}
+
+func isJSONNull(raw []byte) bool {
+	return bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
 }
 
 func isValidHexColor(s string) bool {

@@ -84,66 +84,56 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 
 	var (
-		em                     emulator.Emulator
-		renderCols, renderRows int
-		exitCode               int
+		data     []byte
+		w, h     int
+		exitCode int
 	)
 	if ptyMode {
 		if len(cmdArgs) == 0 {
 			fmt.Fprintln(stderr, "ssterm: missing command after --")
 			return 2
 		}
-		w, h := source.TermSize(stdin, stdout, stderr)
+		w, h = source.TermSize(stdin, stdout, stderr)
 		if colsSet {
 			w = *cols
 		}
 		if rowsSet {
 			h = *rows
 		}
-		var data []byte
-		var err error
 		data, exitCode, err = source.RunPTY(cmdArgs, w, h)
 		if err != nil {
 			fmt.Fprintf(stderr, "ssterm: %v\n", err)
 			return exitCode
 		}
-		em = emulator.New(w, h)
-		if _, err := em.Write(data); err != nil {
-			fmt.Fprintf(stderr, "ssterm: %v\n", err)
-			return 1
-		}
-		renderCols = w
-		if rowsSet {
-			renderRows = *rows
-		}
 	} else {
-		data, err := io.ReadAll(stdin)
+		data, err = source.ReadStdin(stdin)
 		if err != nil {
-			fmt.Fprintf(stderr, "ssterm: reading stdin: %v\n", err)
+			if errors.Is(err, source.ErrEmptyStdin) {
+				fmt.Fprintln(stderr, "ssterm: empty stdin")
+			} else {
+				fmt.Fprintf(stderr, "ssterm: reading stdin: %v\n", err)
+			}
 			return 1
 		}
-		if len(data) == 0 {
-			fmt.Fprintln(stderr, "ssterm: empty stdin")
-			return 1
-		}
-		data = bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
-		data = bytes.TrimSuffix(data, []byte("\n"))
-		data = bytes.ReplaceAll(data, []byte("\n"), []byte("\r\n"))
-
-		w, h := fitEstimate(data)
+		w, h = fitEstimate(data)
 		if colsSet {
 			w = *cols
 		}
 		if rowsSet {
 			h = *rows
 		}
-		em = emulator.New(w, h)
-		if _, err := em.Write(data); err != nil {
-			fmt.Fprintf(stderr, "ssterm: %v\n", err)
-			return 1
-		}
+	}
 
-		renderCols, renderRows = usedBounds(em, rowsSet)
+	em := emulator.New(w, h)
+	if _, err := em.Write(data); err != nil {
+		fmt.Fprintf(stderr, "ssterm: %v\n", err)
+		return 1
+	}
+
+	skipScrollback := ptyMode || rowsSet
+	renderCols, renderRows := w, h
+	if !ptyMode {
+		renderCols, renderRows = usedBounds(em, skipScrollback)
 		if colsSet {
 			renderCols = *cols
 		}
@@ -153,16 +143,16 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 
 	var img []byte
-	if strings.EqualFold(filepath.Ext(*output), ".png") {
+	if ext == ".png" {
 		img = png.RenderWithOptions(em, th, png.Options{
-			SkipScrollback: rowsSet,
+			SkipScrollback: skipScrollback,
 			Cols:           renderCols,
 			Rows:           renderRows,
 		})
 	} else {
 		img = svg.RenderWithOptions(em, th, svg.Options{
 			Font:           *font,
-			SkipScrollback: rowsSet,
+			SkipScrollback: skipScrollback,
 			Cols:           renderCols,
 			Rows:           renderRows,
 		})
