@@ -122,7 +122,7 @@ func TestHelpListsFlags(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
 	}
-	for _, f := range []string{"-o", "--theme", "--cols", "--rows", "--font", "--trim", "--crop", "--padding"} {
+	for _, f := range []string{"-o", "--theme", "--cols", "--rows", "--font", "--trim", "--crop", "--padding", "--chrome", "--shadow"} {
 		if !strings.Contains(stderr, f) {
 			t.Errorf("help does not mention %s:\n%s", f, stderr)
 		}
@@ -957,3 +957,261 @@ func TestPaddingEnhancement(t *testing.T) {
 		t.Fatalf("--padding 0 PNG differs from Faithful PNG")
 	}
 }
+
+func TestChromeSVGAllBuiltinThemes(t *testing.T) {
+	// Default Faithful mode has no Chrome.
+	plainSVG, stderr, code := run(t, "hello world\n")
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %q", code, stderr)
+	}
+	if !strings.Contains(plainSVG, `width="99" height="18"`) {
+		t.Fatalf("expected Faithful height 18 without --chrome, got:\n%s", plainSVG)
+	}
+	if strings.Contains(plainSVG, "#ff5f56") || strings.Contains(plainSVG, "<circle") {
+		t.Fatalf("expected no Chrome elements without --chrome:\n%s", plainSVG)
+	}
+
+	themes := []struct {
+		name      string
+		chromeBg  string
+		buttons   [3]string
+		wantShape string
+		wantLeft  bool
+	}{
+		{
+			name:      "dark",
+			chromeBg:  "#2d2f31",
+			buttons:   [3]string{"#ff5f56", "#ffbd2e", "#27c93f"},
+			wantShape: `<circle cx="16" cy="16" r="6" fill="#ff5f56"/>`,
+			wantLeft:  true,
+		},
+		{
+			name:      "light",
+			chromeBg:  "#e8e8e8",
+			buttons:   [3]string{"#ff5f56", "#ffbd2e", "#27c93f"},
+			wantShape: `<circle cx="16" cy="16" r="6" fill="#ff5f56"/>`,
+			wantLeft:  true,
+		},
+		{
+			name:      "macos",
+			chromeBg:  "#e5e5e5",
+			buttons:   [3]string{"#ff5f56", "#ffbd2e", "#27c93f"},
+			wantShape: `<circle cx="16" cy="16" r="6" fill="#ff5f56"/>`,
+			wantLeft:  true,
+		},
+		{
+			name:      "iterm2",
+			chromeBg:  "#323232",
+			buttons:   [3]string{"#ff5f56", "#ffbd2e", "#27c93f"},
+			wantShape: `<circle cx="16" cy="16" r="6" fill="#ff5f56"/>`,
+			wantLeft:  true,
+		},
+		{
+			name:      "gnome",
+			chromeBg:  "#303030",
+			buttons:   [3]string{"#4a4a4a", "#4a4a4a", "#cc0000"},
+			wantShape: `<circle cx="83" cy="16" r="6" fill="#cc0000"/>`,
+			wantLeft:  false,
+		},
+		{
+			name:      "windows",
+			chromeBg:  "#1f1f1f",
+			buttons:   [3]string{"#cccccc", "#cccccc", "#e81123"},
+			wantShape: `fill="#e81123"`,
+			wantLeft:  false,
+		},
+	}
+
+	for _, tc := range themes {
+		t.Run(tc.name, func(t *testing.T) {
+			out, stderr, code := run(t, "hello world\n", "--theme", tc.name, "--chrome")
+			if code != 0 {
+				t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
+			}
+			if !strings.Contains(out, `width="99" height="50"`) {
+				t.Fatalf("theme %s: expected width=99 height=50 with --chrome:\n%s", tc.name, out)
+			}
+			wantBar := `height="32" fill="` + tc.chromeBg + `"`
+			if !strings.Contains(out, wantBar) {
+				t.Errorf("theme %s: missing title bar %s:\n%s", tc.name, wantBar, out)
+			}
+			for _, btn := range tc.buttons {
+				if !strings.Contains(out, btn) {
+					t.Errorf("theme %s: missing button color %s:\n%s", tc.name, btn, out)
+				}
+			}
+			if !strings.Contains(out, tc.wantShape) {
+				t.Errorf("theme %s: missing expected button shape %s:\n%s", tc.name, tc.wantShape, out)
+			}
+			if got := svgTexts(t, out); !slices.Equal(got, []string{"hello world"}) {
+				t.Errorf("theme %s: texts = %q, want [hello world]", tc.name, got)
+			}
+			if !strings.Contains(out, `<text x="0" y="45"`) {
+				t.Errorf("theme %s: expected text shifted down to y=45:\n%s", tc.name, out)
+			}
+		})
+	}
+}
+
+func TestChromePNGAllBuiltinThemes(t *testing.T) {
+	themes := []struct {
+		name     string
+		termBg   color.NRGBA
+		chromeBg color.NRGBA
+		buttons  [3]color.NRGBA
+		left     bool
+	}{
+		{
+			name:     "dark",
+			termBg:   color.NRGBA{0x1d, 0x1f, 0x21, 0xff},
+			chromeBg: color.NRGBA{0x2d, 0x2f, 0x31, 0xff},
+			buttons:  [3]color.NRGBA{{0xff, 0x5f, 0x56, 0xff}, {0xff, 0xbd, 0x2e, 0xff}, {0x27, 0xc9, 0x3f, 0xff}},
+			left:     true,
+		},
+		{
+			name:     "light",
+			termBg:   color.NRGBA{0xff, 0xff, 0xff, 0xff},
+			chromeBg: color.NRGBA{0xe8, 0xe8, 0xe8, 0xff},
+			buttons:  [3]color.NRGBA{{0xff, 0x5f, 0x56, 0xff}, {0xff, 0xbd, 0x2e, 0xff}, {0x27, 0xc9, 0x3f, 0xff}},
+			left:     true,
+		},
+		{
+			name:     "macos",
+			termBg:   color.NRGBA{0xff, 0xff, 0xff, 0xff},
+			chromeBg: color.NRGBA{0xe5, 0xe5, 0xe5, 0xff},
+			buttons:  [3]color.NRGBA{{0xff, 0x5f, 0x56, 0xff}, {0xff, 0xbd, 0x2e, 0xff}, {0x27, 0xc9, 0x3f, 0xff}},
+			left:     true,
+		},
+		{
+			name:     "iterm2",
+			termBg:   color.NRGBA{0x00, 0x00, 0x00, 0xff},
+			chromeBg: color.NRGBA{0x32, 0x32, 0x32, 0xff},
+			buttons:  [3]color.NRGBA{{0xff, 0x5f, 0x56, 0xff}, {0xff, 0xbd, 0x2e, 0xff}, {0x27, 0xc9, 0x3f, 0xff}},
+			left:     true,
+		},
+		{
+			name:     "gnome",
+			termBg:   color.NRGBA{0x2e, 0x34, 0x36, 0xff},
+			chromeBg: color.NRGBA{0x30, 0x30, 0x30, 0xff},
+			buttons:  [3]color.NRGBA{{0x4a, 0x4a, 0x4a, 0xff}, {0x4a, 0x4a, 0x4a, 0xff}, {0xcc, 0x00, 0x00, 0xff}},
+			left:     false,
+		},
+		{
+			name:     "windows",
+			termBg:   color.NRGBA{0x0c, 0x0c, 0x0c, 0xff},
+			chromeBg: color.NRGBA{0x1f, 0x1f, 0x1f, 0xff},
+			buttons:  [3]color.NRGBA{{0xcc, 0xcc, 0xcc, 0xff}, {0xcc, 0xcc, 0xcc, 0xff}, {0xe8, 0x11, 0x23, 0xff}},
+			left:     false,
+		},
+	}
+
+	for _, tc := range themes {
+		t.Run(tc.name, func(t *testing.T) {
+			img, _ := runPNG(t, "hello world\n", "--theme", tc.name, "--chrome")
+			if got := img.Bounds().Size(); got != image.Pt(99, 50) {
+				t.Fatalf("theme %s: size = %v, want (99, 50)", tc.name, got)
+			}
+			if got := color.NRGBAModel.Convert(img.At(0, 0)).(color.NRGBA); got != tc.chromeBg {
+				t.Errorf("theme %s: title bar pixel (0,0) = %#v, want %#v", tc.name, got, tc.chromeBg)
+			}
+			if got := color.NRGBAModel.Convert(img.At(0, 32)).(color.NRGBA); got != tc.termBg {
+				t.Errorf("theme %s: content pixel (0,32) = %#v, want %#v", tc.name, got, tc.termBg)
+			}
+			barColors := make(map[color.NRGBA]int)
+			xStart, xEnd := 0, 68
+			if !tc.left {
+				xStart, xEnd = 35, 99
+			}
+			for y := 0; y < 32; y++ {
+				for x := xStart; x < xEnd; x++ {
+					c := color.NRGBAModel.Convert(img.At(x, y)).(color.NRGBA)
+					barColors[c]++
+				}
+			}
+			for _, btn := range tc.buttons {
+				if barColors[btn] == 0 {
+					t.Errorf("theme %s: button color %#v not found in title bar buttons region [%d..%d)", tc.name, btn, xStart, xEnd)
+				}
+			}
+		})
+	}
+}
+
+func TestShadowAndChromeCombinedSVGAndPNG(t *testing.T) {
+	svgShadow, stderr, code := run(t, "hello world\n", "--shadow")
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %q", code, stderr)
+	}
+	if !strings.Contains(svgShadow, `width="139" height="58"`) {
+		t.Fatalf("expected SVG size 139x58 with --shadow, got:\n%s", svgShadow)
+	}
+	if !strings.Contains(svgShadow, `<filter id="shadow"`) {
+		t.Errorf("expected SVG shadow filter with --shadow:\n%s", svgShadow)
+	}
+	if !strings.Contains(svgShadow, `<text x="20" y="33"`) {
+		t.Errorf("expected text shifted by shadowPad (20, 20) to x=20 y=33:\n%s", svgShadow)
+	}
+	if got := svgTexts(t, svgShadow); !slices.Equal(got, []string{"hello world"}) {
+		t.Errorf("texts = %q, want [hello world]", got)
+	}
+
+	svgBoth, stderr, code := run(t, "hello world\n", "--chrome", "--shadow")
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %q", code, stderr)
+	}
+	if !strings.Contains(svgBoth, `width="139" height="90"`) {
+		t.Fatalf("expected SVG size 139x90 with --chrome --shadow, got:\n%s", svgBoth)
+	}
+	if !strings.Contains(svgBoth, `<filter id="shadow"`) || !strings.Contains(svgBoth, `#ff5f56`) {
+		t.Errorf("expected both shadow filter and chrome buttons in SVG:\n%s", svgBoth)
+	}
+	if !strings.Contains(svgBoth, `<text x="20" y="65"`) {
+		t.Errorf("expected text at x=20 y=65 (20 + 32 + 13):\n%s", svgBoth)
+	}
+
+	pngShadow, _ := runPNG(t, "hello world\n", "--shadow")
+	if got := pngShadow.Bounds().Size(); got != image.Pt(139, 58) {
+		t.Fatalf("PNG --shadow size = %v, want (139, 58)", got)
+	}
+	if corner := color.NRGBAModel.Convert(pngShadow.At(0, 0)).(color.NRGBA); corner.A != 0 {
+		t.Errorf("PNG --shadow outer corner (0,0) alpha = %d, want 0", corner.A)
+	}
+	belowWin := color.NRGBAModel.Convert(pngShadow.At(50, 20+18+2)).(color.NRGBA)
+	if belowWin.A == 0 || belowWin.A == 0xff {
+		t.Errorf("PNG --shadow pixel below window (50,40) = %#v, want translucent shadow (0 < A < 255)", belowWin)
+	}
+	insideWin := color.NRGBAModel.Convert(pngShadow.At(20, 20)).(color.NRGBA)
+	if insideWin != (color.NRGBA{0x1d, 0x1f, 0x21, 0xff}) {
+		t.Errorf("PNG --shadow window pixel (20,20) = %#v, want #1d1f21", insideWin)
+	}
+
+	pngBoth, _ := runPNG(t, "hello world\n", "--chrome", "--shadow")
+	if got := pngBoth.Bounds().Size(); got != image.Pt(139, 90) {
+		t.Fatalf("PNG --chrome --shadow size = %v, want (139, 90)", got)
+	}
+	if got := color.NRGBAModel.Convert(pngBoth.At(20, 20)).(color.NRGBA); got != (color.NRGBA{0x2d, 0x2f, 0x31, 0xff}) {
+		t.Errorf("PNG --chrome --shadow chrome pixel (20,20) = %#v, want #2d2f31", got)
+	}
+	if got := color.NRGBAModel.Convert(pngBoth.At(20, 52)).(color.NRGBA); got != (color.NRGBA{0x1d, 0x1f, 0x21, 0xff}) {
+		t.Errorf("PNG --chrome --shadow content pixel (20,52) = %#v, want #1d1f21", got)
+	}
+	belowBoth := color.NRGBAModel.Convert(pngBoth.At(50, 20+50+2)).(color.NRGBA)
+	if belowBoth.A == 0 || belowBoth.A == 0xff {
+		t.Errorf("PNG --chrome --shadow pixel below window (50,72) = %#v, want translucent shadow", belowBoth)
+	}
+
+	// All Enhancements combined (--trim --padding 8 --chrome --shadow).
+	svgAll, stderr, code := run(t, "\n  hi  \n", "--cols", "8", "--rows", "4", "--trim", "--padding", "8", "--chrome", "--shadow")
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %q", code, stderr)
+	}
+	// Trimmed grid is 2x1 (18x18) + 2*8 padding = 34x34 + 32 chromeH = 34x66 + 2*20 shadowPad = 74x106.
+	if !strings.Contains(svgAll, `width="74" height="106"`) {
+		t.Fatalf("expected combined SVG size 74x106, got:\n%s", svgAll)
+	}
+	pngAll, _ := runPNG(t, "\n  hi  \n", "--cols", "8", "--rows", "4", "--trim", "--padding", "8", "--chrome", "--shadow")
+	if got := pngAll.Bounds().Size(); got != image.Pt(74, 106) {
+		t.Fatalf("combined PNG size = %v, want (74, 106)", got)
+	}
+}
+

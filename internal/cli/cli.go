@@ -44,6 +44,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	trim := fs.Bool("trim", false, "trim leading and trailing blank rows and columns")
 	cropSpec := fs.String("crop", "", "crop Screen grid to COL,ROW,WxH")
 	padding := fs.Int("padding", 0, "padding in pixels around the Screen grid")
+	chrome := fs.Bool("chrome", false, "draw the Theme's Chrome")
+	shadow := fs.Bool("shadow", false, "draw a drop shadow around the Screenshot")
 	var cmdArgs []string
 	ptyMode := false
 	if idx := slices.Index(args, "--"); idx >= 0 {
@@ -172,6 +174,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			Cols:           renderCols,
 			Rows:           renderRows,
 			Padding:        *padding,
+			Chrome:         *chrome,
+			Shadow:         *shadow,
 		})
 	} else {
 		img = svg.RenderWithOptions(em, th, svg.Options{
@@ -180,6 +184,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			Cols:           renderCols,
 			Rows:           renderRows,
 			Padding:        *padding,
+			Chrome:         *chrome,
+			Shadow:         *shadow,
 		})
 	}
 	if *output != "" {
