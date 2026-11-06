@@ -131,3 +131,54 @@ func TestGolden(t *testing.T) {
 		t.Fatalf("output differs from %s (run with -update after reviewing)\n got:\n%s\nwant:\n%s", golden, out, want)
 	}
 }
+
+func TestColorsAndAttributesGolden(t *testing.T) {
+	in, err := os.ReadFile("testdata/styled.ansi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, _, code := run(t, string(in))
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	golden := "testdata/styled.svg"
+	if *update {
+		if err := os.WriteFile(golden, []byte(out), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want, err := os.ReadFile(golden)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != string(want) {
+		t.Fatalf("output differs from %s (run with -update after reviewing)\n got:\n%s\nwant:\n%s", golden, out, want)
+	}
+}
+
+func TestColorSpecsAreRendered(t *testing.T) {
+	tests := []struct{ name, in, want string }{
+		{"ansi from theme", "\x1b[31mx", `fill="#cc6666"`},
+		{"256 as emitted", "\x1b[38;5;196mx", `fill="#ff0000"`},
+		{"truecolor as emitted", "\x1b[38;2;18;52;86mx", `fill="#123456"`},
+		{"background", "\x1b[44mx", `<rect x="0" y="0" width="9" height="18" fill="#81a2be"/>`},
+		{"bold as bright", "\x1b[1;31mx", `fill="#d54e53" font-weight="bold"`},
+		{"italic", "\x1b[3mx", `font-style="italic"`},
+		{"underline", "\x1b[4mx", `text-decoration="underline"`},
+		{"strikethrough", "\x1b[9mx", `text-decoration="line-through"`},
+		{"dim", "\x1b[2mx", `opacity="0.5"`},
+		{"reverse", "\x1b[7mx", `fill="#1d1f21"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, _, _ := run(t, tt.in)
+			if !strings.Contains(out, tt.want) {
+				t.Fatalf("output lacks %s:\n%s", tt.want, out)
+			}
+		})
+	}
+	out, _, _ := run(t, "\x1b[5mx")
+	if strings.Contains(out, "blink") || strings.Contains(out, "<animate") {
+		t.Fatalf("blink must render static:\n%s", out)
+	}
+}

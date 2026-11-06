@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1008" height="54" viewBox="0 0 1008 54">
+<rect width="1008" height="54" fill="#1d1f21"/>
+<g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, &#39;DejaVu Sans Mono&#39;, monospace" font-size="14" fill="#c5c8c6" xml:space="preserve">
+<rect x="117" y="0" width="54" height="18" fill="#81a2be"/>
+<text x="0" y="13" textLength="171" lengthAdjust="spacing"><tspan fill="#cc6666">red</tspan> <tspan fill="#d54e53" font-weight="bold">bold-red</tspan> bluebg</text>
+<rect x="126" y="18" width="27" height="18" fill="#010203"/>
+<text x="0" y="31" textLength="153" lengthAdjust="spacing"><tspan fill="#ff0000">256</tspan> <tspan fill="#585858">gray</tspan> <tspan fill="#123456">true</tspan> tbg</text>
+<rect x="243" y="36" width="27" height="18" fill="#c5c8c6"/>
+<rect x="333" y="36" width="72" height="18" fill="#b5bd68"/>
+<text x="0" y="49" textLength="405" lengthAdjust="spacing"><tspan font-weight="bold">bold</tspan> <tspan font-style="italic">ital</tspan> <tspan text-decoration="underline">under</tspan> <tspan text-decoration="line-through">strike</tspan> <tspan opacity="0.5">dim</tspan> <tspan fill="#1d1f21">rev</tspan> blink <tspan fill="#1d1f21">revgreen</tspan></text>
+</g>
+</svg>
