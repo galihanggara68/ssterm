@@ -8,7 +8,6 @@ import (
 	"image/draw"
 	stdpng "image/png"
 	"strconv"
-	"strings"
 	"sync"
 
 	"golang.org/x/image/font"
@@ -20,15 +19,14 @@ import (
 	"golang.org/x/image/math/fixed"
 
 	"ssterm/internal/emulator"
+	"ssterm/internal/enhance"
 	"ssterm/internal/theme"
 )
 
 const (
-	fontSize  = 14
-	cellW     = 9
-	cellH     = 18
-	chromeH   = 32
-	shadowPad = 20
+	fontSize = 14
+	cellW    = enhance.CellW
+	cellH    = enhance.CellH
 )
 
 // Options controls optional PNG rendering behavior.
@@ -92,43 +90,18 @@ func newFace(bold, italic bool) font.Face {
 
 // RenderWithOptions draws the Screen grid using the Theme and Options.
 func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte {
-	sb := e.ScrollbackLen()
-	if opts.SkipScrollback {
-		sb = 0
-	}
-	totalRows := sb + e.Rows()
-	if opts.Rows > 0 && opts.Rows < totalRows {
-		totalRows = opts.Rows
-	}
-	cols := e.Cols()
-	if opts.Cols > 0 && opts.Cols < cols {
-		cols = opts.Cols
-	}
-	p := max(opts.Padding, 0)
-	w, h := cols*cellW+2*p, totalRows*cellH+2*p
-	winX, winY := 0, 0
-	if opts.Shadow {
-		winX, winY = shadowPad, shadowPad
-	}
-	bodyX, bodyY := winX, winY
-	winW, winH := w, h
-	if opts.Chrome {
-		bodyY += chromeH
-		winH += chromeH
-	}
-	contentX, contentY := bodyX+p, bodyY+p
-	totalW, totalH := winW+2*winX, winH+2*winY
+	lay := enhance.ComputeLayout(e, opts.SkipScrollback, opts.Cols, opts.Rows, opts.Padding, opts.Chrome, opts.Shadow)
 
-	img := image.NewRGBA(image.Rect(0, 0, totalW, totalH))
+	img := image.NewRGBA(image.Rect(0, 0, lay.TotalW, lay.TotalH))
 	defBg := parseHex(th.Background)
 	defFg := parseHex(th.Foreground)
 	if opts.Shadow {
-		drawShadow(img, winX, winY, winW, winH)
+		drawShadow(img, lay.WinX, lay.WinY, lay.WinW, lay.WinH)
 	}
 	if opts.Chrome {
-		drawChrome(img, th, winX, winY, winW)
+		drawChrome(img, th, lay.WinX, lay.WinY, lay.WinW)
 	}
-	draw.Draw(img, image.Rect(bodyX, bodyY, bodyX+w, bodyY+h), &image.Uniform{C: defBg}, image.Point{}, draw.Src)
+	draw.Draw(img, image.Rect(lay.BodyX, lay.BodyY, lay.BodyX+lay.BodyW, lay.BodyY+lay.BodyH), &image.Uniform{C: defBg}, image.Point{}, draw.Src)
 
 	faces := [4]font.Face{
 		newFace(false, false),
@@ -142,25 +115,25 @@ func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte
 		}
 	}()
 
-	for row := 0; row < totalRows; row++ {
-		y0 := contentY + row*cellH
+	for row := 0; row < lay.TotalRows; row++ {
+		y0 := lay.ContentY + row*cellH
 		baseline := y0 + cellH - 5
 		// Pass 1: draw all non-default cell backgrounds in the row.
-		for col := 0; col < cols; {
-			c := cellAt(e, row, col, sb)
+		for col := 0; col < lay.Cols; {
+			c := cellAt(e, row, col, lay.SB)
 			cw := max(c.Width, 1)
 			_, bg := resolveColors(th, c, defFg, defBg)
 			if bg != defBg {
-				x0 := contentX + col*cellW
+				x0 := lay.ContentX + col*cellW
 				draw.Draw(img, image.Rect(x0, y0, x0+cw*cellW, y0+cellH), &image.Uniform{C: bg}, image.Point{}, draw.Src)
 			}
 			col += cw
 		}
 		// Pass 2: draw glyphs and text decorations on top of row backgrounds.
-		for col := 0; col < cols; {
-			c := cellAt(e, row, col, sb)
+		for col := 0; col < lay.Cols; {
+			c := cellAt(e, row, col, lay.SB)
 			cw := max(c.Width, 1)
-			x0 := contentX + col*cellW
+			x0 := lay.ContentX + col*cellW
 			fg, _ := resolveColors(th, c, defFg, defBg)
 
 			if c.Text != "" && c.Text != " " {
@@ -221,28 +194,14 @@ func drawShadow(img *image.RGBA, winX, winY, winW, winH int) {
 }
 
 func drawChrome(img *image.RGBA, th theme.Theme, winX, winY, winW int) {
-	c := th.Chrome
-	bgHex := c.Background
-	if bgHex == "" {
-		bgHex = th.Background
-	}
-	bg := parseHex(bgHex)
-	draw.Draw(img, image.Rect(winX, winY, winX+winW, winY+chromeH), &image.Uniform{C: bg}, image.Point{}, draw.Src)
-	cy := winY + chromeH/2
-	switch strings.ToLower(c.Layout) {
-	case "gnome":
-		startX := max(winX+16, winX+winW-56)
-		for i, col := range c.Buttons {
-			fillCircle(img, startX+i*20, cy, 6, parseHex(col))
-		}
-	case "windows":
-		startX := max(winX+8, winX+winW-64)
-		draw.Draw(img, image.Rect(startX, cy-1, startX+10, cy+1), &image.Uniform{C: parseHex(c.Buttons[0])}, image.Point{}, draw.Src)
-		draw.Draw(img, image.Rect(startX+20, cy-5, startX+30, cy+5), &image.Uniform{C: parseHex(c.Buttons[1])}, image.Point{}, draw.Src)
-		draw.Draw(img, image.Rect(startX+40, cy-8, startX+56, cy+8), &image.Uniform{C: parseHex(c.Buttons[2])}, image.Point{}, draw.Src)
-	default:
-		for i, col := range c.Buttons {
-			fillCircle(img, winX+16+i*20, cy, 6, parseHex(col))
+	spec := enhance.ComputeChrome(th, winX, winY, winW)
+	draw.Draw(img, image.Rect(spec.X, spec.Y, spec.X+spec.W, spec.Y+spec.H), &image.Uniform{C: parseHex(spec.Background)}, image.Point{}, draw.Src)
+	for _, btn := range spec.Buttons {
+		col := parseHex(btn.Color)
+		if btn.Circle {
+			fillCircle(img, btn.CX, btn.CY, btn.R, col)
+		} else {
+			draw.Draw(img, image.Rect(btn.X, btn.Y, btn.X+btn.W, btn.Y+btn.H), &image.Uniform{C: col}, image.Point{}, draw.Src)
 		}
 	}
 }

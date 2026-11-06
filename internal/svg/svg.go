@@ -8,15 +8,14 @@ import (
 	"strings"
 
 	"ssterm/internal/emulator"
+	"ssterm/internal/enhance"
 	"ssterm/internal/theme"
 )
 
 const (
-	fontSize  = 14
-	cellW     = 9
-	cellH     = 18
-	chromeH   = 32
-	shadowPad = 20
+	fontSize = 14
+	cellW    = enhance.CellW
+	cellH    = enhance.CellH
 )
 
 // DefaultFont is the font-family stack used when none is given.
@@ -40,62 +39,37 @@ func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte
 	if font == "" {
 		font = DefaultFont
 	}
-	sb := e.ScrollbackLen()
-	if opts.SkipScrollback {
-		sb = 0
-	}
-	totalRows := sb + e.Rows()
-	if opts.Rows > 0 && opts.Rows < totalRows {
-		totalRows = opts.Rows
-	}
-	cols := e.Cols()
-	if opts.Cols > 0 && opts.Cols < cols {
-		cols = opts.Cols
-	}
-	p := max(opts.Padding, 0)
-	w, h := cols*cellW+2*p, totalRows*cellH+2*p
-	winX, winY := 0, 0
-	if opts.Shadow {
-		winX, winY = shadowPad, shadowPad
-	}
-	bodyX, bodyY := winX, winY
-	winW, winH := w, h
-	if opts.Chrome {
-		bodyY += chromeH
-		winH += chromeH
-	}
-	contentX, contentY := bodyX+p, bodyY+p
-	totalW, totalH := winW+2*winX, winH+2*winY
+	lay := enhance.ComputeLayout(e, opts.SkipScrollback, opts.Cols, opts.Rows, opts.Padding, opts.Chrome, opts.Shadow)
 	var b bytes.Buffer
-	fmt.Fprintf(&b, `<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" viewBox="0 0 %d %d">`+"\n", totalW, totalH, totalW, totalH)
+	fmt.Fprintf(&b, `<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" viewBox="0 0 %d %d">`+"\n", lay.TotalW, lay.TotalH, lay.TotalW, lay.TotalH)
 	if !opts.Chrome && !opts.Shadow {
-		fmt.Fprintf(&b, `<rect width="%d" height="%d" fill="%s"/>`+"\n", w, h, th.Background)
+		fmt.Fprintf(&b, `<rect width="%d" height="%d" fill="%s"/>`+"\n", lay.BodyW, lay.BodyH, th.Background)
 	} else {
 		if opts.Shadow {
 			b.WriteString(`<defs><filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#000000" flood-opacity="0.45"/></filter></defs>` + "\n")
-			fmt.Fprintf(&b, `<rect x="%d" y="%d" width="%d" height="%d" fill="#000000" opacity="0.35" filter="url(#shadow)"/>`+"\n", winX, winY+4, winW, winH)
+			fmt.Fprintf(&b, `<rect x="%d" y="%d" width="%d" height="%d" fill="#000000" opacity="0.35" filter="url(#shadow)"/>`+"\n", lay.WinX, lay.WinY+4, lay.WinW, lay.WinH)
 		}
 		if opts.Chrome {
-			writeChrome(&b, th, winX, winY, winW)
+			writeChrome(&b, th, lay.WinX, lay.WinY, lay.WinW)
 		}
-		fmt.Fprintf(&b, `<rect x="%d" y="%d" width="%d" height="%d" fill="%s"/>`+"\n", bodyX, bodyY, w, h, th.Background)
+		fmt.Fprintf(&b, `<rect x="%d" y="%d" width="%d" height="%d" fill="%s"/>`+"\n", lay.BodyX, lay.BodyY, lay.BodyW, lay.BodyH, th.Background)
 	}
 	fmt.Fprintf(&b, `<g font-family="%s" font-size="%d" fill="%s" xml:space="preserve">`+"\n", escape(font), fontSize, th.Foreground)
-	for row := 0; row < totalRows; row++ {
-		runs, segments := rowRuns(e, th, row, sb, cols)
+	for row := 0; row < lay.TotalRows; row++ {
+		runs, segments := rowRuns(e, th, row, lay.SB, lay.Cols)
 		x := 0
 		for _, r := range runs {
 			if r.bg != "" {
-				fmt.Fprintf(&b, `<rect x="%d" y="%d" width="%d" height="%d" fill="%s"/>`+"\n", contentX+x*cellW, contentY+row*cellH, r.cols*cellW, cellH, r.bg)
+				fmt.Fprintf(&b, `<rect x="%d" y="%d" width="%d" height="%d" fill="%s"/>`+"\n", lay.ContentX+x*cellW, lay.ContentY+row*cellH, r.cols*cellW, cellH, r.bg)
 			}
 			x += r.cols
 		}
 		if len(segments) == 0 {
 			continue
 		}
-		y := contentY + row*cellH + cellH - 5
+		y := lay.ContentY + row*cellH + cellH - 5
 		for _, seg := range segments {
-			fmt.Fprintf(&b, `<text x="%d" y="%d" textLength="%d" lengthAdjust="spacing">`, contentX+seg.col*cellW, y, seg.cols*cellW)
+			fmt.Fprintf(&b, `<text x="%d" y="%d" textLength="%d" lengthAdjust="spacing">`, lay.ContentX+seg.col*cellW, y, seg.cols*cellW)
 			curURL := ""
 			for _, r := range seg.runs {
 				if r.url != curURL {
@@ -124,27 +98,13 @@ func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte
 }
 
 func writeChrome(b *bytes.Buffer, th theme.Theme, winX, winY, winW int) {
-	c := th.Chrome
-	bg := c.Background
-	if bg == "" {
-		bg = th.Background
-	}
-	fmt.Fprintf(b, `<rect x="%d" y="%d" width="%d" height="%d" fill="%s"/>`+"\n", winX, winY, winW, chromeH, bg)
-	cy := winY + chromeH/2
-	switch strings.ToLower(c.Layout) {
-	case "gnome":
-		startX := max(winX+16, winX+winW-56)
-		for i, col := range c.Buttons {
-			fmt.Fprintf(b, `<circle cx="%d" cy="%d" r="6" fill="%s"/>`+"\n", startX+i*20, cy, col)
-		}
-	case "windows":
-		startX := max(winX+8, winX+winW-64)
-		fmt.Fprintf(b, `<rect x="%d" y="%d" width="10" height="2" fill="%s"/>`+"\n", startX, cy-1, c.Buttons[0])
-		fmt.Fprintf(b, `<rect x="%d" y="%d" width="10" height="10" fill="%s"/>`+"\n", startX+20, cy-5, c.Buttons[1])
-		fmt.Fprintf(b, `<rect x="%d" y="%d" width="16" height="16" fill="%s"/>`+"\n", startX+40, cy-8, c.Buttons[2])
-	default:
-		for i, col := range c.Buttons {
-			fmt.Fprintf(b, `<circle cx="%d" cy="%d" r="6" fill="%s"/>`+"\n", winX+16+i*20, cy, col)
+	spec := enhance.ComputeChrome(th, winX, winY, winW)
+	fmt.Fprintf(b, `<rect x="%d" y="%d" width="%d" height="%d" fill="%s"/>`+"\n", spec.X, spec.Y, spec.W, spec.H, spec.Background)
+	for _, btn := range spec.Buttons {
+		if btn.Circle {
+			fmt.Fprintf(b, `<circle cx="%d" cy="%d" r="%d" fill="%s"/>`+"\n", btn.CX, btn.CY, btn.R, btn.Color)
+		} else {
+			fmt.Fprintf(b, `<rect x="%d" y="%d" width="%d" height="%d" fill="%s"/>`+"\n", btn.X, btn.Y, btn.W, btn.H, btn.Color)
 		}
 	}
 }

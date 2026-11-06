@@ -1,5 +1,5 @@
-// Package enhance applies opt-in cosmetic Enhancements (trim, crop, padding)
-// to an emulated Screen grid before rendering.
+// Package enhance applies opt-in cosmetic Enhancements (trim, crop, padding,
+// Chrome, shadow) to an emulated Screen grid and computes Screenshot layout.
 package enhance
 
 import (
@@ -8,7 +8,112 @@ import (
 	"strings"
 
 	"ssterm/internal/emulator"
+	"ssterm/internal/theme"
 )
+
+// Cell and Chrome dimensions in pixels.
+const (
+	CellW     = 9
+	CellH     = 18
+	ChromeH   = 32
+	ShadowPad = 20
+)
+
+// Layout holds the pixel geometry of a rendered Screenshot.
+type Layout struct {
+	SB, Cols, TotalRows int
+	BodyW, BodyH        int
+	WinX, WinY          int
+	WinW, WinH          int
+	BodyX, BodyY        int
+	ContentX, ContentY  int
+	TotalW, TotalH      int
+}
+
+// ComputeLayout calculates the pixel geometry for rendering em with the given
+// view constraints and cosmetic Enhancements.
+func ComputeLayout(em emulator.Emulator, skipScrollback bool, cols, rows, padding int, chrome, shadow bool) Layout {
+	sb, c, r := ViewDims(em, skipScrollback, cols, rows)
+	p := max(padding, 0)
+	w, h := c*CellW+2*p, r*CellH+2*p
+	winX, winY := 0, 0
+	if shadow {
+		winX, winY = ShadowPad, ShadowPad
+	}
+	bodyX, bodyY := winX, winY
+	winW, winH := w, h
+	if chrome {
+		bodyY += ChromeH
+		winH += ChromeH
+	}
+	return Layout{
+		SB:        sb,
+		Cols:      c,
+		TotalRows: r,
+		BodyW:     w,
+		BodyH:     h,
+		WinX:      winX,
+		WinY:      winY,
+		WinW:      winW,
+		WinH:      winH,
+		BodyX:     bodyX,
+		BodyY:     bodyY,
+		ContentX:  bodyX + p,
+		ContentY:  bodyY + p,
+		TotalW:    winW + 2*winX,
+		TotalH:    winH + 2*winY,
+	}
+}
+
+// ChromeButton describes a single window control button in Chrome.
+type ChromeButton struct {
+	Circle     bool
+	CX, CY, R  int
+	X, Y, W, H int
+	Color      string
+}
+
+// ChromeSpec describes the resolved title bar and buttons for a Theme's Chrome.
+type ChromeSpec struct {
+	Background string
+	X, Y, W, H int
+	Buttons    [3]ChromeButton
+}
+
+// ComputeChrome returns the resolved Chrome geometry for th at window origin
+// (winX, winY) and width winW.
+func ComputeChrome(th theme.Theme, winX, winY, winW int) ChromeSpec {
+	c := th.Chrome
+	bg := c.Background
+	if bg == "" {
+		bg = th.Background
+	}
+	cy := winY + ChromeH/2
+	spec := ChromeSpec{
+		Background: bg,
+		X:          winX,
+		Y:          winY,
+		W:          winW,
+		H:          ChromeH,
+	}
+	switch strings.ToLower(c.Layout) {
+	case "gnome":
+		startX := max(winX+16, winX+winW-56)
+		for i, col := range c.Buttons {
+			spec.Buttons[i] = ChromeButton{Circle: true, CX: startX + i*20, CY: cy, R: 6, Color: col}
+		}
+	case "windows":
+		startX := max(winX+8, winX+winW-64)
+		spec.Buttons[0] = ChromeButton{X: startX, Y: cy - 1, W: 10, H: 2, Color: c.Buttons[0]}
+		spec.Buttons[1] = ChromeButton{X: startX + 20, Y: cy - 5, W: 10, H: 10, Color: c.Buttons[1]}
+		spec.Buttons[2] = ChromeButton{X: startX + 40, Y: cy - 8, W: 16, H: 16, Color: c.Buttons[2]}
+	default:
+		for i, col := range c.Buttons {
+			spec.Buttons[i] = ChromeButton{Circle: true, CX: winX + 16 + i*20, CY: cy, R: 6, Color: col}
+		}
+	}
+	return spec
+}
 
 // CropRect specifies a rectangular sub-grid in 0-based cell coordinates.
 type CropRect struct {
@@ -63,9 +168,9 @@ func ParseCrop(spec string) (CropRect, error) {
 
 // Crop extracts the rectangular sub-grid defined by rect from the active
 // Screen grid view.
-func Crop(em emulator.Emulator, skipScrollback bool, cols, rows int, rect CropRect) (emulator.Emulator, bool, int, int) {
-	sb, totalCols, totalRows := viewDims(em, skipScrollback, cols, rows)
-	return extract(em, sb, totalCols, totalRows, rect.X, rect.Y, rect.W, rect.H), true, rect.W, rect.H
+func Crop(em emulator.Emulator, skipScrollback bool, cols, rows int, rect CropRect) emulator.Emulator {
+	sb, totalCols, totalRows := ViewDims(em, skipScrollback, cols, rows)
+	return extract(em, sb, totalCols, totalRows, rect.X, rect.Y, rect.W, rect.H)
 }
 
 // IsBlankCell reports whether a cell is visually empty (blank text with no
@@ -97,8 +202,8 @@ func (g *subGrid) Cell(row, col int) emulator.Cell {
 
 // Trim strips leading and trailing blank rows and columns around the active
 // Screen grid view, leaving at least a 1x1 grid when all cells are blank.
-func Trim(em emulator.Emulator, skipScrollback bool, cols, rows int) (emulator.Emulator, bool, int, int) {
-	sb, totalCols, totalRows := viewDims(em, skipScrollback, cols, rows)
+func Trim(em emulator.Emulator, skipScrollback bool, cols, rows int) emulator.Emulator {
+	sb, totalCols, totalRows := ViewDims(em, skipScrollback, cols, rows)
 	var (
 		found          bool
 		minRow, maxRow int
@@ -137,10 +242,11 @@ func Trim(em emulator.Emulator, skipScrollback bool, cols, rows int) (emulator.E
 	}
 	w := maxCol - minCol + 1
 	h := maxRow - minRow + 1
-	return extract(em, sb, totalCols, totalRows, minCol, minRow, w, h), true, w, h
+	return extract(em, sb, totalCols, totalRows, minCol, minRow, w, h)
 }
 
-func viewDims(em emulator.Emulator, skipScrollback bool, cols, rows int) (sb, totalCols, totalRows int) {
+// ViewDims resolves the active Scrollback row count and clamped grid dimensions.
+func ViewDims(em emulator.Emulator, skipScrollback bool, cols, rows int) (sb, totalCols, totalRows int) {
 	sb = em.ScrollbackLen()
 	if skipScrollback {
 		sb = 0

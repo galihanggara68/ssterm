@@ -161,10 +161,12 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 	}
 	if *trim {
-		em, skipScrollback, renderCols, renderRows = enhance.Trim(em, skipScrollback, renderCols, renderRows)
+		em = enhance.Trim(em, skipScrollback, renderCols, renderRows)
+		renderCols, renderRows = em.Cols(), em.Rows()
 	}
 	if *cropSpec != "" {
-		em, skipScrollback, renderCols, renderRows = enhance.Crop(em, skipScrollback, renderCols, renderRows, cropRect)
+		em = enhance.Crop(em, skipScrollback, renderCols, renderRows, cropRect)
+		renderCols, renderRows = em.Cols(), em.Rows()
 	}
 
 	var img []byte
@@ -239,7 +241,7 @@ func usedBounds(em emulator.Emulator, skipScrollback bool) (cols, rows int) {
 			} else {
 				cell = em.Cell(r-sb, c)
 			}
-			if !isBlankCell(cell) {
+			if !enhance.IsBlankCell(cell) {
 				rowUsed = true
 				if end := c + cell.Width; end > cols {
 					cols = end
@@ -252,8 +254,4 @@ func usedBounds(em emulator.Emulator, skipScrollback bool) (cols, rows int) {
 		}
 	}
 	return max(cols, 1), max(rows, 1)
-}
-
-func isBlankCell(c emulator.Cell) bool {
-	return enhance.IsBlankCell(c)
 }

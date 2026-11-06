@@ -832,7 +832,7 @@ func TestPTYExitCodePropagationAndErrors(t *testing.T) {
 }
 
 func TestTrimEnhancement(t *testing.T) {
-	// Piped input with leading/trailing blank rows and leading/trailing blank columns.
+	// Piped Source with leading/trailing blank rows and leading/trailing blank columns.
 	in := "\n\n  hi   \n   ok  \n\n"
 	out, stderr, code := run(t, in, "--cols", "10", "--rows", "8", "--trim")
 	if code != 0 {
@@ -845,7 +845,7 @@ func TestTrimEnhancement(t *testing.T) {
 		t.Fatalf("expected trimmed 3x2 size (27x36), got:\n%s", out)
 	}
 
-	// All-blank input with --trim leaves a 1x1 Screen grid.
+	// All-blank Source with --trim leaves a 1x1 Screen grid.
 	blankOut, stderr, code := run(t, "   \n   \n", "--cols", "5", "--rows", "4", "--trim")
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr: %q)", code, stderr)
