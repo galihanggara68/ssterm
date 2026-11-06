@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"encoding/xml"
 	"flag"
+	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"path/filepath"
 	"slices"
@@ -282,6 +285,7 @@ func TestSizingAndErrors(t *testing.T) {
 		{name: "zero rows rejected", stdin: "x\n", args: []string{"--rows", "0"}, wantCode: 2, wantStderr: []string{"--rows"}},
 		{name: "unknown flag", stdin: "x\n", args: []string{"--bogus"}, wantCode: 2, wantStderr: []string{"bogus", "Usage:"}},
 		{name: "unknown theme lists names", stdin: "x\n", args: []string{"--theme", "nope"}, wantCode: 2, wantStderr: []string{"nope", "dark"}},
+		{name: "unsupported output extension", stdin: "x\n", args: []string{"-o", "out.jpg"}, wantCode: 2, wantStderr: []string{"ssterm:", ".jpg"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -351,3 +355,144 @@ func TestGoldenWideAndBoxDrawing(t *testing.T) {
 	}
 	golden(t, "wide", string(in))
 }
+
+func runPNG(t *testing.T, stdin string, args ...string) (image.Image, []byte) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "shot.png")
+	allArgs := append([]string{"-o", path}, args...)
+	out, stderr, code := run(t, stdin, allArgs...)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %q", code, stderr)
+	}
+	if out != "" {
+		t.Fatalf("stdout = %q, want empty when -o is given", out)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := png.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("png.Decode: %v", err)
+	}
+	return img, data
+}
+
+func TestOutputFlagWritesPNGWithMatchingDimensions(t *testing.T) {
+	img, _ := runPNG(t, "hello\nworld\n")
+	if got := img.Bounds().Size(); got != image.Pt(5*9, 2*18) {
+		t.Fatalf("size = %v, want %v", got, image.Pt(5*9, 2*18))
+	}
+	// Corner pixel in cell (0,0) should be the dark theme background (#1d1f21).
+	got := color.NRGBAModel.Convert(img.At(0, 0)).(color.NRGBA)
+	want := color.NRGBA{R: 0x1d, G: 0x1f, B: 0x21, A: 0xff}
+	if got != want {
+		t.Fatalf("bg pixel at (0,0) = %#v, want %#v", got, want)
+	}
+}
+
+func cellColors(img image.Image, col, row int) map[color.NRGBA]int {
+	counts := make(map[color.NRGBA]int)
+	for y := row * 18; y < (row+1)*18; y++ {
+		for x := col * 9; x < (col+1)*9; x++ {
+			c := color.NRGBAModel.Convert(img.At(x, y)).(color.NRGBA)
+			counts[c]++
+		}
+	}
+	return counts
+}
+
+func TestPNGColorsAndAttributes(t *testing.T) {
+	darkBg := color.NRGBA{R: 0x1d, G: 0x1f, B: 0x21, A: 0xff}
+	darkFg := color.NRGBA{R: 0xc5, G: 0xc8, B: 0xc6, A: 0xff}
+	ansiRed := color.NRGBA{R: 0xcc, G: 0x66, B: 0x66, A: 0xff}
+	ansiBlue := color.NRGBA{R: 0x81, G: 0xa2, B: 0xbe, A: 0xff}
+	brightRed := color.NRGBA{R: 0xd5, G: 0x4e, B: 0x53, A: 0xff}
+
+	t.Run("ansi fg and bg", func(t *testing.T) {
+		img, _ := runPNG(t, "\x1b[31;44mM\x1b[0m \n", "--cols", "2")
+		c0 := cellColors(img, 0, 0)
+		if c0[ansiBlue] == 0 {
+			t.Fatalf("cell (0,0) missing blue background %#v: %v", ansiBlue, c0)
+		}
+		if c0[ansiRed] == 0 {
+			t.Fatalf("cell (0,0) missing red foreground %#v: %v", ansiRed, c0)
+		}
+		c1 := cellColors(img, 1, 0)
+		if c1[darkBg] != 9*18 {
+			t.Fatalf("blank cell (1,0) should be all default bg %#v: %v", darkBg, c1)
+		}
+	})
+
+	t.Run("256-color and truecolor", func(t *testing.T) {
+		img, _ := runPNG(t, "\x1b[38;5;196mM\x1b[38;2;18;52;86mM\n")
+		if cellColors(img, 0, 0)[color.NRGBA{R: 0xff, G: 0x00, B: 0x00, A: 0xff}] == 0 {
+			t.Fatalf("cell (0,0) missing 256-color #ff0000")
+		}
+		if cellColors(img, 1, 0)[color.NRGBA{R: 0x12, G: 0x34, B: 0x56, A: 0xff}] == 0 {
+			t.Fatalf("cell (1,0) missing truecolor #123456")
+		}
+	})
+
+	t.Run("bold as bright and font variants", func(t *testing.T) {
+		img, _ := runPNG(t, "\x1b[1;31mM\x1b[0;3mM\n")
+		if cellColors(img, 0, 0)[brightRed] == 0 {
+			t.Fatalf("bold palette 1 should use bright red %#v: %v", brightRed, cellColors(img, 0, 0))
+		}
+		if cellColors(img, 1, 0)[darkFg] == 0 {
+			t.Fatalf("italic cell missing foreground %#v", darkFg)
+		}
+	})
+
+	t.Run("reverse and dim", func(t *testing.T) {
+		img, _ := runPNG(t, "\x1b[7mM\x1b[0;2mM\n")
+		rev := cellColors(img, 0, 0)
+		if rev[darkFg] == 0 || rev[darkBg] == 0 {
+			t.Fatalf("reverse cell should have swapped fg/bg: %v", rev)
+		}
+		// Top-left corner of reversed cell (0,0) is cell background -> darkFg.
+		if got := color.NRGBAModel.Convert(img.At(0, 0)).(color.NRGBA); got != darkFg {
+			t.Fatalf("reversed cell corner = %#v, want %#v", got, darkFg)
+		}
+		dimFg := color.NRGBA{
+			R: uint8((uint16(darkFg.R) + uint16(darkBg.R)) / 2),
+			G: uint8((uint16(darkFg.G) + uint16(darkBg.G)) / 2),
+			B: uint8((uint16(darkFg.B) + uint16(darkBg.B)) / 2),
+			A: 0xff,
+		}
+		if cellColors(img, 1, 0)[dimFg] == 0 {
+			t.Fatalf("dim cell missing blended foreground %#v: %v", dimFg, cellColors(img, 1, 0))
+		}
+	})
+
+	t.Run("underline and strikethrough on space", func(t *testing.T) {
+		img, _ := runPNG(t, "\x1b[4m \x1b[0;9m \x1b[0;5mM\x1b[0m\n")
+		if cellColors(img, 0, 0)[darkFg] < 9 {
+			t.Fatalf("underlined space should draw line in fg %#v: %v", darkFg, cellColors(img, 0, 0))
+		}
+		if cellColors(img, 1, 0)[darkFg] < 9 {
+			t.Fatalf("strikethrough space should draw line in fg %#v: %v", darkFg, cellColors(img, 1, 0))
+		}
+		if cellColors(img, 2, 0)[darkFg] == 0 {
+			t.Fatalf("static blink cell should render foreground %#v: %v", darkFg, cellColors(img, 2, 0))
+		}
+	})
+}
+
+func TestPNGOutputIsDeterministicAndCaseInsensitive(t *testing.T) {
+	_, b1 := runPNG(t, "\x1b[1;32mhello\x1b[0m world\nsecond line\n")
+	upperPath := filepath.Join(t.TempDir(), "SHOT.PNG")
+	_, stderr, code := run(t, "\x1b[1;32mhello\x1b[0m world\nsecond line\n", "-o", upperPath)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %q", code, stderr)
+	}
+	b2, err := os.ReadFile(upperPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(b1, b2) {
+		t.Fatalf("two PNG runs produced different bytes (%d vs %d)", len(b1), len(b2))
+	}
+}
+
+

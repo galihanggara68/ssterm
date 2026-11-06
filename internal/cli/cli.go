@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
 
 	"ssterm/internal/emulator"
+	"ssterm/internal/png"
 	"ssterm/internal/svg"
 	"ssterm/internal/theme"
 )
@@ -60,6 +62,11 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "ssterm: --rows must be greater than 0")
 		return 2
 	}
+	ext := strings.ToLower(filepath.Ext(*output))
+	if *output != "" && ext != ".svg" && ext != ".png" {
+		fmt.Fprintf(stderr, "ssterm: unsupported output format %q (expected .svg or .png)\n", filepath.Ext(*output))
+		return 2
+	}
 
 	th, ok := theme.Lookup(*themeName)
 	if !ok {
@@ -101,12 +108,21 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		renderRows = *rows
 	}
 
-	img := svg.RenderWithOptions(em, th, svg.Options{
-		Font:           *font,
-		SkipScrollback: rowsSet,
-		Cols:           renderCols,
-		Rows:           renderRows,
-	})
+	var img []byte
+	if strings.EqualFold(filepath.Ext(*output), ".png") {
+		img = png.RenderWithOptions(em, th, png.Options{
+			SkipScrollback: rowsSet,
+			Cols:           renderCols,
+			Rows:           renderRows,
+		})
+	} else {
+		img = svg.RenderWithOptions(em, th, svg.Options{
+			Font:           *font,
+			SkipScrollback: rowsSet,
+			Cols:           renderCols,
+			Rows:           renderRows,
+		})
+	}
 	if *output != "" {
 		if err := os.WriteFile(*output, img, 0o644); err != nil {
 			fmt.Fprintf(stderr, "ssterm: %v\n", err)
