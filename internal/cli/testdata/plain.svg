@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="135" height="54" viewBox="0 0 135 54">
+<rect width="135" height="54" fill="#1d1f21"/>
+<g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, &#39;DejaVu Sans Mono&#39;, monospace" font-size="14" fill="#c5c8c6" xml:space="preserve">
+<text x="0" y="13" textLength="126" lengthAdjust="spacing">Hello, ssterm!</text>
+<text x="0" y="31" textLength="135" lengthAdjust="spacing">  indented line</text>
+<text x="0" y="49" textLength="81" lengthAdjust="spacing">last line</text>
+</g>
+</svg>
