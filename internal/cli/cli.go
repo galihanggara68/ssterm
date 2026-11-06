@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"ssterm/internal/emulator"
+	"ssterm/internal/enhance"
 	"ssterm/internal/png"
 	"ssterm/internal/source"
 	"ssterm/internal/svg"
@@ -40,6 +41,9 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	cols := fs.Int("cols", 0, "screen width in columns (default: fit content)")
 	rows := fs.Int("rows", 0, "screen height in rows (default: fit content)")
 	font := fs.String("font", "", "SVG font-family stack")
+	trim := fs.Bool("trim", false, "trim leading and trailing blank rows and columns")
+	cropSpec := fs.String("crop", "", "crop Screen grid to COL,ROW,WxH")
+	padding := fs.Int("padding", 0, "padding in pixels around the Screen grid")
 	var cmdArgs []string
 	ptyMode := false
 	if idx := slices.Index(args, "--"); idx >= 0 {
@@ -70,6 +74,19 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if rowsSet && *rows <= 0 {
 		fmt.Fprintln(stderr, "ssterm: --rows must be greater than 0")
 		return 2
+	}
+	if *padding < 0 {
+		fmt.Fprintln(stderr, "ssterm: --padding must be >= 0")
+		return 2
+	}
+	var cropRect enhance.CropRect
+	if *cropSpec != "" {
+		var err error
+		cropRect, err = enhance.ParseCrop(*cropSpec)
+		if err != nil {
+			fmt.Fprintf(stderr, "ssterm: %v\n", err)
+			return 2
+		}
 	}
 	ext := strings.ToLower(filepath.Ext(*output))
 	if *output != "" && ext != ".svg" && ext != ".png" {
@@ -141,6 +158,12 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			renderRows = *rows
 		}
 	}
+	if *trim {
+		em, skipScrollback, renderCols, renderRows = enhance.Trim(em, skipScrollback, renderCols, renderRows)
+	}
+	if *cropSpec != "" {
+		em, skipScrollback, renderCols, renderRows = enhance.Crop(em, skipScrollback, renderCols, renderRows, cropRect)
+	}
 
 	var img []byte
 	if ext == ".png" {
@@ -148,6 +171,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			SkipScrollback: skipScrollback,
 			Cols:           renderCols,
 			Rows:           renderRows,
+			Padding:        *padding,
 		})
 	} else {
 		img = svg.RenderWithOptions(em, th, svg.Options{
@@ -155,6 +179,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			SkipScrollback: skipScrollback,
 			Cols:           renderCols,
 			Rows:           renderRows,
+			Padding:        *padding,
 		})
 	}
 	if *output != "" {
@@ -224,8 +249,5 @@ func usedBounds(em emulator.Emulator, skipScrollback bool) (cols, rows int) {
 }
 
 func isBlankCell(c emulator.Cell) bool {
-	return (c.Text == "" || c.Text == " ") &&
-		c.Bg.Kind == emulator.ColorDefault &&
-		c.Attrs&(emulator.AttrReverse|emulator.AttrUnderline|emulator.AttrStrikethrough) == 0 &&
-		c.URL == ""
+	return enhance.IsBlankCell(c)
 }

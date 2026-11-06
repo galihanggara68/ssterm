@@ -26,6 +26,8 @@ type Options struct {
 	SkipScrollback bool
 	// Cols and Rows override the rendered grid width and height when > 0.
 	Cols, Rows int
+	// Padding adds pixels of Theme background around all four sides of the Screen grid.
+	Padding int
 }
 
 // RenderWithOptions draws the Screen grid using the Theme and Options.
@@ -46,7 +48,8 @@ func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte
 	if opts.Cols > 0 && opts.Cols < cols {
 		cols = opts.Cols
 	}
-	w, h := cols*cellW, totalRows*cellH
+	p := max(opts.Padding, 0)
+	w, h := cols*cellW+2*p, totalRows*cellH+2*p
 	var b bytes.Buffer
 	fmt.Fprintf(&b, `<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" viewBox="0 0 %d %d">`+"\n", w, h, w, h)
 	fmt.Fprintf(&b, `<rect width="%d" height="%d" fill="%s"/>`+"\n", w, h, th.Background)
@@ -56,16 +59,16 @@ func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte
 		x := 0
 		for _, r := range runs {
 			if r.bg != "" {
-				fmt.Fprintf(&b, `<rect x="%d" y="%d" width="%d" height="%d" fill="%s"/>`+"\n", x*cellW, row*cellH, r.cols*cellW, cellH, r.bg)
+				fmt.Fprintf(&b, `<rect x="%d" y="%d" width="%d" height="%d" fill="%s"/>`+"\n", p+x*cellW, p+row*cellH, r.cols*cellW, cellH, r.bg)
 			}
 			x += r.cols
 		}
 		if len(segments) == 0 {
 			continue
 		}
-		y := row*cellH + cellH - 5
+		y := p + row*cellH + cellH - 5
 		for _, seg := range segments {
-			fmt.Fprintf(&b, `<text x="%d" y="%d" textLength="%d" lengthAdjust="spacing">`, seg.col*cellW, y, seg.cols*cellW)
+			fmt.Fprintf(&b, `<text x="%d" y="%d" textLength="%d" lengthAdjust="spacing">`, p+seg.col*cellW, y, seg.cols*cellW)
 			curURL := ""
 			for _, r := range seg.runs {
 				if r.url != curURL {

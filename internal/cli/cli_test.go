@@ -122,7 +122,7 @@ func TestHelpListsFlags(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
 	}
-	for _, f := range []string{"-o", "--theme", "--cols", "--rows", "--font"} {
+	for _, f := range []string{"-o", "--theme", "--cols", "--rows", "--font", "--trim", "--crop", "--padding"} {
 		if !strings.Contains(stderr, f) {
 			t.Errorf("help does not mention %s:\n%s", f, stderr)
 		}
@@ -262,6 +262,10 @@ func TestSizingAndErrors(t *testing.T) {
 		{name: "empty stdin", stdin: "", wantCode: 1, wantStderr: []string{"ssterm:", "empty stdin"}},
 		{name: "negative cols rejected", stdin: "x\n", args: []string{"--cols", "-5"}, wantCode: 2, wantStderr: []string{"--cols"}},
 		{name: "zero rows rejected", stdin: "x\n", args: []string{"--rows", "0"}, wantCode: 2, wantStderr: []string{"--rows"}},
+		{name: "invalid crop syntax rejected", stdin: "x\n", args: []string{"--crop", "bad"}, wantCode: 2, wantStderr: []string{"--crop"}},
+		{name: "negative crop origin rejected", stdin: "x\n", args: []string{"--crop", "-1,0,2x2"}, wantCode: 2, wantStderr: []string{"--crop"}},
+		{name: "zero crop size rejected", stdin: "x\n", args: []string{"--crop", "0,0,0x2"}, wantCode: 2, wantStderr: []string{"--crop"}},
+		{name: "negative padding rejected", stdin: "x\n", args: []string{"--padding", "-1"}, wantCode: 2, wantStderr: []string{"--padding"}},
 		{name: "unknown flag", stdin: "x\n", args: []string{"--bogus"}, wantCode: 2, wantStderr: []string{"bogus", "Usage:"}},
 		{name: "unknown theme lists names", stdin: "x\n", args: []string{"--theme", "nope"}, wantCode: 2, wantStderr: []string{"nope", "dark"}},
 		{name: "unsupported output extension", stdin: "x\n", args: []string{"-o", "out.jpg"}, wantCode: 2, wantStderr: []string{"ssterm:", ".jpg"}},
@@ -824,5 +828,132 @@ func TestPTYExitCodePropagationAndErrors(t *testing.T) {
 	out, stderr, code = run(t, "", "--", "/nonexistent/ssterm-no-such-binary")
 	if code == 0 || out != "" || !strings.Contains(stderr, "ssterm:") {
 		t.Fatalf("bad command: code=%d out=%q stderr=%q", code, out, stderr)
+	}
+}
+
+func TestTrimEnhancement(t *testing.T) {
+	// Piped input with leading/trailing blank rows and leading/trailing blank columns.
+	in := "\n\n  hi   \n   ok  \n\n"
+	out, stderr, code := run(t, in, "--cols", "10", "--rows", "8", "--trim")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %q)", code, stderr)
+	}
+	if got := svgTexts(t, out); !slices.Equal(got, []string{"hi", " ok"}) {
+		t.Fatalf("texts = %q, want [\"hi\" \" ok\"]", got)
+	}
+	if !strings.Contains(out, `width="27" height="36"`) {
+		t.Fatalf("expected trimmed 3x2 size (27x36), got:\n%s", out)
+	}
+
+	// All-blank input with --trim leaves a 1x1 Screen grid.
+	blankOut, stderr, code := run(t, "   \n   \n", "--cols", "5", "--rows", "4", "--trim")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %q)", code, stderr)
+	}
+	if !strings.Contains(blankOut, `width="9" height="18"`) {
+		t.Fatalf("expected 1x1 blank grid (9x18), got:\n%s", blankOut)
+	}
+
+	// PNG output with --trim strips leading/trailing blank rows and columns.
+	img, _ := runPNG(t, "\n  \x1b[44mM\x1b[0m  \n\n", "--cols", "6", "--rows", "4", "--trim")
+	if got := img.Bounds().Size(); got != image.Pt(9, 18) {
+		t.Fatalf("trimmed PNG size = %v, want (9,18)", got)
+	}
+	ansiBlue := color.NRGBA{R: 0x81, G: 0xa2, B: 0xbe, A: 0xff}
+	if cellColors(img, 0, 0)[ansiBlue] == 0 {
+		t.Fatalf("trimmed PNG cell (0,0) missing blue background: %v", cellColors(img, 0, 0))
+	}
+}
+
+func TestCropEnhancement(t *testing.T) {
+	grid := "012345\nabcdef\nABCDEF\nUVWXYZ\n"
+	for _, spec := range []string{"1,1,3x2", "3x2+1+1", "1,1,3,2"} {
+		out, stderr, code := run(t, grid, "--crop", spec)
+		if code != 0 {
+			t.Fatalf("--crop %s: exit code = %d, want 0 (stderr: %q)", spec, code, stderr)
+		}
+		if got := svgTexts(t, out); !slices.Equal(got, []string{"bcd", "BCD"}) {
+			t.Fatalf("--crop %s: texts = %q, want [bcd BCD]", spec, got)
+		}
+		if !strings.Contains(out, `width="27" height="36"`) {
+			t.Fatalf("--crop %s: expected 3x2 size (27x36), got:\n%s", spec, out)
+		}
+	}
+
+	// Wide characters straddling left and right crop boundaries become spaces cleanly.
+	// "a日本b": col 0='a', col 1..2='日', col 3..4='本', col 5='b'.
+	// Cropping 2,0,3x1 covers cols 2..4: right half of '日' (space) + '本' (cols 1..2 of crop).
+	wideOut, stderr, code := run(t, "a日本b\n", "--crop", "2,0,3x1")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %q)", code, stderr)
+	}
+	if got := svgTexts(t, wideOut); !slices.Equal(got, []string{" 本"}) {
+		t.Fatalf("wide crop texts = %q, want [\" 本\"]", got)
+	}
+	if !strings.Contains(wideOut, `width="27" height="18"`) {
+		t.Fatalf("expected 3x1 size (27x18), got:\n%s", wideOut)
+	}
+
+	// PNG output with --crop extracts the target subgrid.
+	img, _ := runPNG(t, "..\n.\x1b[41mM\x1b[0m\n", "--crop", "1,1,2x2")
+	if got := img.Bounds().Size(); got != image.Pt(2*9, 2*18) {
+		t.Fatalf("cropped PNG size = %v, want (18,36)", got)
+	}
+	ansiRed := color.NRGBA{R: 0xcc, G: 0x66, B: 0x66, A: 0xff}
+	if cellColors(img, 0, 0)[ansiRed] == 0 {
+		t.Fatalf("cropped PNG cell (0,0) missing red background: %v", cellColors(img, 0, 0))
+	}
+}
+
+func TestPaddingEnhancement(t *testing.T) {
+	// SVG with --padding 12 shifts background rects and text by (12, 12) and adds 24px to width/height.
+	out, stderr, code := run(t, "\x1b[44mhi\x1b[0m\n", "--padding", "12")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %q)", code, stderr)
+	}
+	for _, want := range []string{
+		`width="42" height="42" viewBox="0 0 42 42"`,
+		`<rect width="42" height="42" fill="#1d1f21"/>`,
+		`<rect x="12" y="12" width="18" height="18" fill="#81a2be"/>`,
+		`<text x="12" y="25" textLength="18" lengthAdjust="spacing">hi</text>`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("padded SVG missing %s:\n%s", want, out)
+		}
+	}
+
+	// PNG with --padding 10 adds 10px of Theme background around the 1x1 cell grid (9x18 -> 29x38).
+	img, _ := runPNG(t, "\x1b[44mM\x1b[0m\n", "--padding", "10")
+	if got := img.Bounds().Size(); got != image.Pt(9+20, 18+20) {
+		t.Fatalf("padded PNG size = %v, want (29,38)", got)
+	}
+	darkBg := color.NRGBA{R: 0x1d, G: 0x1f, B: 0x21, A: 0xff}
+	ansiBlue := color.NRGBA{R: 0x81, G: 0xa2, B: 0xbe, A: 0xff}
+	for _, pt := range []image.Point{{0, 0}, {9, 9}, {10, 9}, {9, 10}, {28, 37}, {19, 28}} {
+		if got := color.NRGBAModel.Convert(img.At(pt.X, pt.Y)).(color.NRGBA); got != darkBg {
+			t.Fatalf("padding pixel at %v = %#v, want Theme bg %#v", pt, got, darkBg)
+		}
+	}
+	cellContentColors := make(map[color.NRGBA]int)
+	for y := 10; y < 10+18; y++ {
+		for x := 10; x < 10+9; x++ {
+			c := color.NRGBAModel.Convert(img.At(x, y)).(color.NRGBA)
+			cellContentColors[c]++
+		}
+	}
+	if cellContentColors[ansiBlue] == 0 {
+		t.Fatalf("padded PNG cell interior missing blue background: %v", cellContentColors)
+	}
+
+	// Faithful mode: --padding 0 produces byte-for-byte identical output to no flags.
+	faithfulSVG, _, _ := run(t, "hello\nworld\n")
+	zeroPadSVG, _, _ := run(t, "hello\nworld\n", "--padding", "0")
+	if faithfulSVG != zeroPadSVG {
+		t.Fatalf("--padding 0 SVG differs from Faithful SVG")
+	}
+	_, faithfulPNG := runPNG(t, "hello\nworld\n")
+	_, zeroPadPNG := runPNG(t, "hello\nworld\n", "--padding", "0")
+	if !bytes.Equal(faithfulPNG, zeroPadPNG) {
+		t.Fatalf("--padding 0 PNG differs from Faithful PNG")
 	}
 }

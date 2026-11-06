@@ -33,6 +33,8 @@ type Options struct {
 	SkipScrollback bool
 	// Cols and Rows override the rendered grid width and height when > 0.
 	Cols, Rows int
+	// Padding adds pixels of Theme background around all four sides of the Screen grid.
+	Padding int
 }
 
 var (
@@ -97,7 +99,8 @@ func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte
 	if opts.Cols > 0 && opts.Cols < cols {
 		cols = opts.Cols
 	}
-	w, h := cols*cellW, totalRows*cellH
+	p := max(opts.Padding, 0)
+	w, h := cols*cellW+2*p, totalRows*cellH+2*p
 
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
 	defBg := parseHex(th.Background)
@@ -117,7 +120,7 @@ func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte
 	}()
 
 	for row := 0; row < totalRows; row++ {
-		y0 := row * cellH
+		y0 := p + row*cellH
 		baseline := y0 + cellH - 5
 		// Pass 1: draw all non-default cell backgrounds in the row.
 		for col := 0; col < cols; {
@@ -125,7 +128,7 @@ func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte
 			cw := max(c.Width, 1)
 			_, bg := resolveColors(th, c, defFg, defBg)
 			if bg != defBg {
-				x0 := col * cellW
+				x0 := p + col*cellW
 				draw.Draw(img, image.Rect(x0, y0, x0+cw*cellW, y0+cellH), &image.Uniform{C: bg}, image.Point{}, draw.Src)
 			}
 			col += cw
@@ -134,7 +137,7 @@ func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte
 		for col := 0; col < cols; {
 			c := cellAt(e, row, col, sb)
 			cw := max(c.Width, 1)
-			x0 := col * cellW
+			x0 := p + col*cellW
 			fg, _ := resolveColors(th, c, defFg, defBg)
 
 			if c.Text != "" && c.Text != " " {
