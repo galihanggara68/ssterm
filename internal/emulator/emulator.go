@@ -57,4 +57,10 @@ type Emulator interface {
 	Rows() int
 	// Cell returns the cell at the given zero-based row and column.
 	Cell(row, col int) Cell
+	// ScrollbackLen gives the number of Scrollback lines (lines that
+	// scrolled off the top of the Screen grid), oldest first.
+	ScrollbackLen() int
+	// ScrollbackCell returns the cell at the given zero-based Scrollback
+	// row (0 is the oldest) and column.
+	ScrollbackCell(row, col int) Cell
 }

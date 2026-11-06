@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1008" height="54" viewBox="0 0 1008 54">
-<rect width="1008" height="54" fill="#1d1f21"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="405" height="54" viewBox="0 0 405 54">
+<rect width="405" height="54" fill="#1d1f21"/>
 <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, &#39;DejaVu Sans Mono&#39;, monospace" font-size="14" fill="#c5c8c6" xml:space="preserve">
 <rect x="117" y="0" width="54" height="18" fill="#81a2be"/>
 <text x="0" y="13" textLength="171" lengthAdjust="spacing"><tspan fill="#cc6666">red</tspan> <tspan fill="#d54e53" font-weight="bold">bold-red</tspan> bluebg</text>

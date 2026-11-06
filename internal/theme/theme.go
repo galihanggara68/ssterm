@@ -30,3 +30,8 @@ func Lookup(name string) (Theme, bool) {
 	}
 	return Theme{}, false
 }
+
+// Names lists the names of all available Themes.
+func Names() []string {
+	return []string{"dark"}
+}

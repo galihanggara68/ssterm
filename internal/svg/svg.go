@@ -6,7 +6,8 @@ import (
 	"encoding/xml"
 	"fmt"
 	"strings"
-	"unicode/utf8"
+
+	"github.com/charmbracelet/x/ansi"
 
 	"ssterm/internal/emulator"
 	"ssterm/internal/theme"
@@ -21,18 +22,35 @@ const (
 // DefaultFont is the font-family stack used when none is given.
 const DefaultFont = "ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace"
 
+// Options controls optional SVG rendering behavior.
+type Options struct {
+	Font           string
+	SkipScrollback bool
+}
+
 // Render draws the Screen grid faithfully using the Theme.
 func Render(e emulator.Emulator, th theme.Theme, font string) []byte {
+	return RenderWithOptions(e, th, Options{Font: font})
+}
+
+// RenderWithOptions draws the Screen grid using the Theme and Options.
+func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte {
+	font := opts.Font
 	if font == "" {
 		font = DefaultFont
 	}
-	w, h := e.Cols()*cellW, e.Rows()*cellH
+	sb := e.ScrollbackLen()
+	if opts.SkipScrollback {
+		sb = 0
+	}
+	totalRows := sb + e.Rows()
+	w, h := e.Cols()*cellW, totalRows*cellH
 	var b bytes.Buffer
 	fmt.Fprintf(&b, `<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" viewBox="0 0 %d %d">`+"\n", w, h, w, h)
 	fmt.Fprintf(&b, `<rect width="%d" height="%d" fill="%s"/>`+"\n", w, h, th.Background)
 	fmt.Fprintf(&b, `<g font-family="%s" font-size="%d" fill="%s" xml:space="preserve">`+"\n", escape(font), fontSize, th.Foreground)
-	for row := 0; row < e.Rows(); row++ {
-		runs, cols := rowRuns(e, th, row)
+	for row := 0; row < totalRows; row++ {
+		runs, cols := rowRuns(e, th, row, sb)
 		x := 0
 		for _, r := range runs {
 			if r.bg != "" {
@@ -69,12 +87,18 @@ type run struct {
 	attrs string
 }
 
-// rowRuns splits a row into style runs and returns them with the number of
-// columns the row's text spans once trailing blanks are removed.
-func rowRuns(e emulator.Emulator, th theme.Theme, row int) ([]run, int) {
+// rowRuns splits a row (Scrollback rows first, then Screen rows) into style
+// runs and returns them with the number of display columns the row's text
+// spans once trailing blanks are removed.
+func rowRuns(e emulator.Emulator, th theme.Theme, row, scrollback int) ([]run, int) {
 	var runs []run
 	for col := 0; col < e.Cols(); {
-		c := e.Cell(row, col)
+		var c emulator.Cell
+		if row < scrollback {
+			c = e.ScrollbackCell(row, col)
+		} else {
+			c = e.Cell(row-scrollback, col)
+		}
 		text := c.Text
 		if text == "" {
 			text = " "
@@ -91,7 +115,7 @@ func rowRuns(e emulator.Emulator, th theme.Theme, row int) ([]run, int) {
 	trimmed := trimRuns(runs)
 	cols := 0
 	for _, r := range trimmed {
-		cols += utf8.RuneCountInString(r.text)
+		cols += ansi.StringWidth(r.text)
 	}
 	return runs, cols
 }
