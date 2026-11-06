@@ -351,3 +351,48 @@ func TestGoldenWideAndBoxDrawing(t *testing.T) {
 	}
 	golden(t, "wide", string(in))
 }
+
+func TestOSC8HyperlinksBecomeSVGLinks(t *testing.T) {
+	in := "visit \x1b]8;id=1;https://example.com/a?x=1&y=2\x1b\\example\x1b]8;;\x1b\\ or \x1b]8;;https://go.dev\x07\x1b[4;34mgo.dev\x1b[0m\x1b]8;;\x07 now\n"
+	out, _, code := run(t, in)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	if got := svgTexts(t, out); !slices.Equal(got, []string{"visit example or go.dev now"}) {
+		t.Fatalf("texts = %q, want [visit example or go.dev now]", got)
+	}
+	// Display width is 27 cols (243px); OSC 8 URL bytes must not inflate width.
+	if !strings.Contains(out, `width="243"`) {
+		t.Fatalf("expected auto-sized width 243 (27 cols), got:\n%s", out)
+	}
+	for _, want := range []string{
+		`<a href="https://example.com/a?x=1&amp;y=2">example</a>`,
+		`<a href="https://go.dev"><tspan fill="#81a2be" text-decoration="underline">go.dev</tspan></a>`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output missing %s:\n%s", want, out)
+		}
+	}
+}
+
+func TestFontFlagSetsFontFamily(t *testing.T) {
+	out, _, code := run(t, "hello\n", "--font", "JetBrains Mono, 'Fira Code', monospace")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	want := `font-family="JetBrains Mono, &#39;Fira Code&#39;, monospace"`
+	if !strings.Contains(out, want) {
+		t.Fatalf("output missing %s:\n%s", want, out)
+	}
+}
+
+func TestHyperlinksAndFontGolden(t *testing.T) {
+	in, err := os.ReadFile("testdata/links.ansi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	golden(t, "links", string(in), "--font", "JetBrains Mono, monospace")
+}
+
+
+

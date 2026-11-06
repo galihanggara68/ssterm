@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="207" height="18" viewBox="0 0 207 18">
+<rect width="207" height="18" fill="#1d1f21"/>
+<g font-family="JetBrains Mono, monospace" font-size="14" fill="#c5c8c6" xml:space="preserve">
+<text x="0" y="13" textLength="207" lengthAdjust="spacing">See <a href="https://example.com/docs?a=1&amp;b=2"><tspan fill="#81a2be" text-decoration="underline">docs</tspan></a> and <a href="https://github.com/example/ssterm"><tspan font-weight="bold">repo</tspan> page</a>.</text>
+</g>
+</svg>

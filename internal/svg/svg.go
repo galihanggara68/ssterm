@@ -66,12 +66,25 @@ func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte
 		y := row*cellH + cellH - 5
 		for _, seg := range segments {
 			fmt.Fprintf(&b, `<text x="%d" y="%d" textLength="%d" lengthAdjust="spacing">`, seg.col*cellW, y, seg.cols*cellW)
+			curURL := ""
 			for _, r := range seg.runs {
+				if r.url != curURL {
+					if curURL != "" {
+						b.WriteString("</a>")
+					}
+					if r.url != "" {
+						fmt.Fprintf(&b, `<a href="%s">`, escape(r.url))
+					}
+					curURL = r.url
+				}
 				if r.attrs == "" {
 					b.WriteString(escape(r.text))
 				} else {
 					fmt.Fprintf(&b, `<tspan%s>%s</tspan>`, r.attrs, escape(r.text))
 				}
+			}
+			if curURL != "" {
+				b.WriteString("</a>")
 			}
 			b.WriteString("</text>\n")
 		}
@@ -80,13 +93,14 @@ func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte
 	return b.Bytes()
 }
 
-// run is a span of cells sharing one style and cell width.
+// run is a span of cells sharing one style, hyperlink and cell width.
 type run struct {
 	text  string
 	cols  int
 	wide  bool
 	bg    string // CSS color, empty for the Theme background
 	attrs string // SVG attribute string, empty for default style
+	url   string // OSC 8 hyperlink URL, empty when unlinked
 	deco  bool   // whether underline or strikethrough is set
 }
 
@@ -123,13 +137,13 @@ func rowRuns(e emulator.Emulator, th theme.Theme, row, scrollback, maxCols int) 
 		} else {
 			bgRuns = append(bgRuns, run{cols: c.Width, bg: bg})
 		}
-		cellRuns = append(cellRuns, run{text: text, cols: c.Width, wide: wide, attrs: attrs, deco: deco})
+		cellRuns = append(cellRuns, run{text: text, cols: c.Width, wide: wide, attrs: attrs, url: c.URL, deco: deco})
 		col += c.Width
 	}
-	// Trim trailing unstyled blank cells (preserving spaces with underline/strikethrough).
+	// Trim trailing unstyled blank cells (preserving spaces with underline/strikethrough or a link).
 	for len(cellRuns) > 0 {
 		last := cellRuns[len(cellRuns)-1]
-		if last.text == " " && !last.deco {
+		if last.text == " " && !last.deco && last.url == "" {
 			cellRuns = cellRuns[:len(cellRuns)-1]
 			continue
 		}
@@ -144,7 +158,7 @@ func rowRuns(e emulator.Emulator, th theme.Theme, row, scrollback, maxCols int) 
 		if n := len(segments); n > 0 && segments[n-1].runs[0].wide == cr.wide {
 			seg := &segments[n-1]
 			seg.cols += cr.cols
-			if m := len(seg.runs); m > 0 && seg.runs[m-1].attrs == cr.attrs {
+			if m := len(seg.runs); m > 0 && seg.runs[m-1].attrs == cr.attrs && seg.runs[m-1].url == cr.url {
 				seg.runs[m-1].text += cr.text
 				seg.runs[m-1].cols += cr.cols
 			} else {

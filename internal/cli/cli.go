@@ -176,5 +176,6 @@ func usedBounds(em emulator.Emulator, skipScrollback bool) (cols, rows int) {
 func isBlankCell(c emulator.Cell) bool {
 	return (c.Text == "" || c.Text == " ") &&
 		c.Bg.Kind == emulator.ColorDefault &&
-		c.Attrs&(emulator.AttrReverse|emulator.AttrUnderline|emulator.AttrStrikethrough) == 0
+		c.Attrs&(emulator.AttrReverse|emulator.AttrUnderline|emulator.AttrStrikethrough) == 0 &&
+		c.URL == ""
 }

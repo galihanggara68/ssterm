@@ -14,6 +14,8 @@ type Cell struct {
 	Fg, Bg Color
 	// Attrs is a set of Attr flags.
 	Attrs Attr
+	// URL is the OSC 8 hyperlink target, or empty when the cell is not linked.
+	URL string
 }
 
 // ColorKind says how a Color is specified.

@@ -53,6 +53,7 @@ func toCell(c *uv.Cell) Cell {
 		Fg:    convertColor(c.Style.Fg),
 		Bg:    convertColor(c.Style.Bg),
 		Attrs: convertAttrs(c.Style),
+		URL:   c.Link.URL,
 	}
 }
 
