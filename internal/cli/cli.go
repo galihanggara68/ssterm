@@ -32,7 +32,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		})
 	}
 	output := fs.String("o", "", "write the Screenshot to this file instead of stdout")
-	themeName := fs.String("theme", "dark", "Theme name")
+	themeName := fs.String("theme", theme.Default().Name, "Theme name")
 	cols := fs.Int("cols", 0, "screen width in columns (default: fit content)")
 	rows := fs.Int("rows", 0, "screen height in rows (default: fit content)")
 	font := fs.String("font", "", "SVG font-family stack")
@@ -40,6 +40,24 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
+		return 2
+	}
+
+	var colsSet, rowsSet bool
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "cols":
+			colsSet = true
+		case "rows":
+			rowsSet = true
+		}
+	})
+	if colsSet && *cols <= 0 {
+		fmt.Fprintln(stderr, "ssterm: --cols must be greater than 0")
+		return 2
+	}
+	if rowsSet && *rows <= 0 {
+		fmt.Fprintln(stderr, "ssterm: --rows must be greater than 0")
 		return 2
 	}
 
@@ -54,19 +72,19 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "ssterm: reading stdin: %v\n", err)
 		return 1
 	}
-	if len(bytes.TrimSpace(data)) == 0 {
-		fmt.Fprintln(stderr, "ssterm: no input on stdin")
+	if len(data) == 0 {
+		fmt.Fprintln(stderr, "ssterm: empty stdin")
 		return 1
 	}
 	data = bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
 	data = bytes.TrimSuffix(data, []byte("\n"))
 	data = bytes.ReplaceAll(data, []byte("\n"), []byte("\r\n"))
 
-	w, h := fitContent(data)
-	if *cols > 0 {
+	w, h := fitEstimate(data)
+	if colsSet {
 		w = *cols
 	}
-	if *rows > 0 {
+	if rowsSet {
 		h = *rows
 	}
 	em := emulator.New(w, h)
@@ -75,9 +93,19 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 
+	renderCols, renderRows := usedBounds(em, rowsSet)
+	if colsSet {
+		renderCols = *cols
+	}
+	if rowsSet {
+		renderRows = *rows
+	}
+
 	img := svg.RenderWithOptions(em, th, svg.Options{
 		Font:           *font,
-		SkipScrollback: *rows > 0,
+		SkipScrollback: rowsSet,
+		Cols:           renderCols,
+		Rows:           renderRows,
 	})
 	if *output != "" {
 		if err := os.WriteFile(*output, img, 0o644); err != nil {
@@ -93,18 +121,60 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// fitContent sizes the Screen grid to the content (without a trailing
-// newline): the widest line in display columns and the number of lines.
-func fitContent(data []byte) (cols, rows int) {
+// fitEstimate gives an initial upper-bound Screen grid size before emulation so
+// lines do not wrap unless --cols is explicitly set, and cursor addressing on
+// the alternate screen has room to land.
+func fitEstimate(data []byte) (cols, rows int) {
 	lines := strings.Split(string(data), "\r\n")
 	for _, l := range lines {
-		// Escape sequences take no columns, and \r overwrites: the widest
-		// segment between carriage returns in display columns is used.
 		for seg := range strings.SplitSeq(l, "\r") {
 			if n := ansi.StringWidth(seg); n > cols {
 				cols = n
 			}
 		}
 	}
-	return max(cols, 1), max(len(lines), 1)
+	rows = len(lines)
+	if bytes.Contains(data, []byte("\x1b[")) && rows < 24 {
+		rows = 24
+	}
+	return max(cols, 1), max(rows, 1)
+}
+
+// usedBounds inspects the emulated Screen grid (and Scrollback when included)
+// and returns the tightest (cols, rows) bounding box containing any non-blank
+// or styled cell, with a minimum of (1, 1).
+func usedBounds(em emulator.Emulator, skipScrollback bool) (cols, rows int) {
+	sb := em.ScrollbackLen()
+	if skipScrollback {
+		sb = 0
+	}
+	totalRows := sb + em.Rows()
+	for r := 0; r < totalRows; r++ {
+		rowUsed := false
+		for c := 0; c < em.Cols(); {
+			var cell emulator.Cell
+			if r < sb {
+				cell = em.ScrollbackCell(r, c)
+			} else {
+				cell = em.Cell(r-sb, c)
+			}
+			if !isBlankCell(cell) {
+				rowUsed = true
+				if end := c + cell.Width; end > cols {
+					cols = end
+				}
+			}
+			c += cell.Width
+		}
+		if rowUsed {
+			rows = r + 1
+		}
+	}
+	return max(cols, 1), max(rows, 1)
+}
+
+func isBlankCell(c emulator.Cell) bool {
+	return (c.Text == "" || c.Text == " ") &&
+		c.Bg.Kind == emulator.ColorDefault &&
+		c.Attrs&(emulator.AttrReverse|emulator.AttrUnderline|emulator.AttrStrikethrough) == 0
 }

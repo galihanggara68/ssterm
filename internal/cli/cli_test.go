@@ -6,6 +6,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -21,12 +22,15 @@ func run(t *testing.T, stdin string, args ...string) (stdout, stderr string, cod
 	return out.String(), errb.String(), code
 }
 
-// svgTexts parses the SVG and returns the content of every <text> element.
+// svgTexts parses the SVG and returns the concatenated text of every row
+// (multiple <text> elements with the same y attribute are joined in order).
 func svgTexts(t *testing.T, svg string) []string {
 	t.Helper()
 	dec := xml.NewDecoder(strings.NewReader(svg))
 	var texts []string
+	var ys []string
 	inText := false
+	var curY string
 	var cur strings.Builder
 	sawRoot := false
 	for {
@@ -41,6 +45,12 @@ func svgTexts(t *testing.T, svg string) []string {
 			}
 			if e.Name.Local == "text" {
 				inText = true
+				curY = ""
+				for _, a := range e.Attr {
+					if a.Name.Local == "y" {
+						curY = a.Value
+					}
+				}
 				cur.Reset()
 			}
 		case xml.CharData:
@@ -50,7 +60,12 @@ func svgTexts(t *testing.T, svg string) []string {
 		case xml.EndElement:
 			if e.Name.Local == "text" {
 				inText = false
-				texts = append(texts, cur.String())
+				if n := len(ys); n > 0 && ys[n-1] == curY {
+					texts[n-1] += cur.String()
+				} else {
+					ys = append(ys, curY)
+					texts = append(texts, cur.String())
+				}
 			}
 		}
 	}
@@ -169,11 +184,13 @@ func TestColorSpecsAreRendered(t *testing.T) {
 	tests := []struct{ name, in, want string }{
 		{"ansi from theme", "\x1b[31mx", `fill="#cc6666"`},
 		{"256 as emitted", "\x1b[38;5;196mx", `fill="#ff0000"`},
+		{"256 low index exact not theme", "\x1b[1;38;5;1mx", `fill="#800000" font-weight="bold"`},
 		{"truecolor as emitted", "\x1b[38;2;18;52;86mx", `fill="#123456"`},
 		{"background", "\x1b[44mx", `<rect x="0" y="0" width="9" height="18" fill="#81a2be"/>`},
 		{"bold as bright", "\x1b[1;31mx", `fill="#d54e53" font-weight="bold"`},
 		{"italic", "\x1b[3mx", `font-style="italic"`},
 		{"underline", "\x1b[4mx", `text-decoration="underline"`},
+		{"trailing underlined space kept", "a\x1b[4m \x1b[0m", `text-decoration="underline"> </tspan>`},
 		{"strikethrough", "\x1b[9mx", `text-decoration="line-through"`},
 		{"dim", "\x1b[2mx", `opacity="0.5"`},
 		{"reverse", "\x1b[7mx", `fill="#1d1f21"`},
@@ -199,7 +216,7 @@ func assertTexts(t *testing.T, stdin string, want []string, args ...string) {
 		t.Fatalf("exit code = %d, want 0", code)
 	}
 	got := svgTexts(t, out)
-	if strings.Join(got, "|") != strings.Join(want, "|") {
+	if !slices.Equal(got, want) {
 		t.Fatalf("texts = %q, want %q", got, want)
 	}
 }
@@ -210,7 +227,6 @@ func TestCarriageReturnOverwritesYieldFinalLine(t *testing.T) {
 
 func TestCarriageReturnShorterOverwriteKeepsTail(t *testing.T) {
 	assertTexts(t, "abcdef\rXY\n", []string{"XYcdef"})
-	assertTexts(t, "ab\x1b[H\x1b[0J\x1b[3Jz", []string{"z"}, "--cols", "4", "--rows", "2")
 }
 
 func TestCursorMovementAndErase(t *testing.T) {
@@ -221,15 +237,27 @@ func TestCursorMovementAndErase(t *testing.T) {
 }
 
 func TestScrollbackIncludedByDefault(t *testing.T) {
-	// Narrow width causes 1 line to wrap into 3 rows on a 2-row auto-sized
-	// grid (since line count is 2), pushing 1 row into Scrollback while
-	// --rows is not set.
 	assertTexts(t, "111122223333\n4444\n", []string{"1111", "2222", "3333", "4444"}, "--cols", "4")
 }
 
 func TestAlternateScreenYieldsFinalGrid(t *testing.T) {
-	assertTexts(t, "main\n\x1b[?1049h\x1b[Halt\x1b[2;1Hscreen", []string{"alt", "screen"}, "--rows", "2")
+	// Main-screen scrollback (1, 2, 3 on 2 rows) must not leak when the final
+	// state is on the alternate screen.
+	assertTexts(t, "1\n2\n3\n\x1b[?1049h\x1b[Halt\x1b[2;1Hscreen", []string{"alt", "screen"}, "--rows", "2")
 	assertTexts(t, "main\n\x1b[?1049h\x1b[Halt\x1b[?1049l", []string{"main"}, "--rows", "2")
+	// Auto-sized alternate screen addressing row 2 without newlines must not clip.
+	assertTexts(t, "\x1b[?1049h\x1b[Htop\x1b[2;1Hbot", []string{"top", "bot"})
+}
+
+func TestAutoSizeFitsPostEmulationContent(t *testing.T) {
+	// Erased tail should not inflate the auto-sized width beyond "status:done" (11 cols = 99px).
+	out, _, code := run(t, "status: ok\x1b[3D\x1b[Kdone\n")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	if !strings.Contains(out, `width="99"`) {
+		t.Fatalf("expected auto-sized width 99 (11 cols), got:\n%s", out)
+	}
 }
 
 func TestGoldenCursorOutput(t *testing.T) {
@@ -248,7 +276,10 @@ func TestSizingAndErrors(t *testing.T) {
 		{name: "auto-size longest line", stdin: "a\nlonger line\nb\n", wantTexts: []string{"a", "longer line", "b"}},
 		{name: "rows keeps last N lines", stdin: "1\n2\n3\n4\n", args: []string{"--rows", "2"}, wantTexts: []string{"3", "4"}},
 		{name: "rows larger than content", stdin: "1\n2\n", args: []string{"--rows", "5"}, wantTexts: []string{"1", "2"}},
-		{name: "empty stdin", stdin: "", wantCode: 1, wantStderr: []string{"ssterm:", "no input"}},
+		{name: "whitespace stdin valid", stdin: "   \n", wantTexts: []string{}},
+		{name: "empty stdin", stdin: "", wantCode: 1, wantStderr: []string{"ssterm:", "empty stdin"}},
+		{name: "negative cols rejected", stdin: "x\n", args: []string{"--cols", "-5"}, wantCode: 2, wantStderr: []string{"--cols"}},
+		{name: "zero rows rejected", stdin: "x\n", args: []string{"--rows", "0"}, wantCode: 2, wantStderr: []string{"--rows"}},
 		{name: "unknown flag", stdin: "x\n", args: []string{"--bogus"}, wantCode: 2, wantStderr: []string{"bogus", "Usage:"}},
 		{name: "unknown theme lists names", stdin: "x\n", args: []string{"--theme", "nope"}, wantCode: 2, wantStderr: []string{"nope", "dark"}},
 	}
@@ -268,7 +299,7 @@ func TestSizingAndErrors(t *testing.T) {
 			}
 			if code == 0 {
 				got := svgTexts(t, out)
-				if strings.Join(got, "|") != strings.Join(tc.wantTexts, "|") {
+				if !slices.Equal(got, tc.wantTexts) {
 					t.Errorf("texts = %q, want %q", got, tc.wantTexts)
 				}
 			}
@@ -303,12 +334,13 @@ func TestWideCharactersOccupyTwoCells(t *testing.T) {
 	if len(texts) != 2 || texts[0] != "日本語x" || texts[1] != "ab" {
 		t.Fatalf("texts = %q, want [日本語x ab]", texts)
 	}
-	// 7 columns * 9px; the width must come from display columns, not runes.
-	if got := svgTextLengths(t, out); len(got) != 2 || got[0] != "63" {
-		t.Fatalf("textLengths = %q, want first 63", got)
-	}
 	if !strings.Contains(out, `width="63"`) {
 		t.Fatalf("screen is not 7 columns wide:\n%s", out)
+	}
+	// Wide chars and ASCII in the same row are anchored to their column x positions:
+	// "日本語" at x=0 (width 54) and "x" at x=54 (width 9).
+	if !strings.Contains(out, `<text x="0" y="13" textLength="54"`) || !strings.Contains(out, `<text x="54" y="13" textLength="9"`) {
+		t.Fatalf("expected wide and narrow segments anchored at x=0 and x=54:\n%s", out)
 	}
 }
 

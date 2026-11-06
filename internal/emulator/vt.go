@@ -25,9 +25,17 @@ func (e *vtEmulator) Rows() int                   { return e.rows }
 
 func (e *vtEmulator) Cell(row, col int) Cell { return toCell(e.term.CellAt(col, row)) }
 
-func (e *vtEmulator) ScrollbackLen() int { return e.term.ScrollbackLen() }
+func (e *vtEmulator) ScrollbackLen() int {
+	if e.term.IsAltScreen() {
+		return 0
+	}
+	return e.term.ScrollbackLen()
+}
 
 func (e *vtEmulator) ScrollbackCell(row, col int) Cell {
+	if e.term.IsAltScreen() {
+		return Cell{Width: 1}
+	}
 	return toCell(e.term.ScrollbackCellAt(col, row))
 }
 
@@ -77,30 +85,8 @@ func convertColor(c color.Color) Color {
 		return Color{}
 	case ansi.BasicColor:
 		return Color{Kind: ColorPalette, Index: uint8(c)}
-	case ansi.IndexedColor:
-		if c < 16 {
-			return Color{Kind: ColorPalette, Index: uint8(c)}
-		}
-		r, g, b := xterm256(uint8(c))
-		return Color{Kind: ColorRGB, R: r, G: g, B: b}
 	default:
 		r, g, b, _ := c.RGBA()
 		return Color{Kind: ColorRGB, R: uint8(r >> 8), G: uint8(g >> 8), B: uint8(b >> 8)}
 	}
-}
-
-// xterm256 returns the standard xterm RGB value of palette index 16-255.
-func xterm256(i uint8) (r, g, b uint8) {
-	if i >= 232 {
-		v := 8 + 10*(i-232)
-		return v, v, v
-	}
-	i -= 16
-	level := func(n uint8) uint8 {
-		if n == 0 {
-			return 0
-		}
-		return 55 + 40*n
-	}
-	return level(i / 36), level(i / 6 % 6), level(i % 6)
 }

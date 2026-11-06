@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/x/ansi"
-
 	"ssterm/internal/emulator"
 	"ssterm/internal/theme"
 )
@@ -26,11 +24,8 @@ const DefaultFont = "ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans
 type Options struct {
 	Font           string
 	SkipScrollback bool
-}
-
-// Render draws the Screen grid faithfully using the Theme.
-func Render(e emulator.Emulator, th theme.Theme, font string) []byte {
-	return RenderWithOptions(e, th, Options{Font: font})
+	// Cols and Rows override the rendered grid width and height when > 0.
+	Cols, Rows int
 }
 
 // RenderWithOptions draws the Screen grid using the Theme and Options.
@@ -44,13 +39,20 @@ func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte
 		sb = 0
 	}
 	totalRows := sb + e.Rows()
-	w, h := e.Cols()*cellW, totalRows*cellH
+	if opts.Rows > 0 && opts.Rows < totalRows {
+		totalRows = opts.Rows
+	}
+	cols := e.Cols()
+	if opts.Cols > 0 && opts.Cols < cols {
+		cols = opts.Cols
+	}
+	w, h := cols*cellW, totalRows*cellH
 	var b bytes.Buffer
 	fmt.Fprintf(&b, `<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" viewBox="0 0 %d %d">`+"\n", w, h, w, h)
 	fmt.Fprintf(&b, `<rect width="%d" height="%d" fill="%s"/>`+"\n", w, h, th.Background)
 	fmt.Fprintf(&b, `<g font-family="%s" font-size="%d" fill="%s" xml:space="preserve">`+"\n", escape(font), fontSize, th.Foreground)
 	for row := 0; row < totalRows; row++ {
-		runs, cols := rowRuns(e, th, row, sb)
+		runs, segments := rowRuns(e, th, row, sb, cols)
 		x := 0
 		for _, r := range runs {
 			if r.bg != "" {
@@ -58,41 +60,51 @@ func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte
 			}
 			x += r.cols
 		}
-		trimmed := trimRuns(runs)
-		if len(trimmed) == 0 {
+		if len(segments) == 0 {
 			continue
 		}
 		y := row*cellH + cellH - 5
-		fmt.Fprintf(&b, `<text x="0" y="%d" textLength="%d" lengthAdjust="spacing">`, y, cols*cellW)
-		for _, r := range trimmed {
-			if r.attrs == "" {
-				b.WriteString(escape(r.text))
-			} else {
-				fmt.Fprintf(&b, `<tspan%s>%s</tspan>`, r.attrs, escape(r.text))
+		for _, seg := range segments {
+			fmt.Fprintf(&b, `<text x="%d" y="%d" textLength="%d" lengthAdjust="spacing">`, seg.col*cellW, y, seg.cols*cellW)
+			for _, r := range seg.runs {
+				if r.attrs == "" {
+					b.WriteString(escape(r.text))
+				} else {
+					fmt.Fprintf(&b, `<tspan%s>%s</tspan>`, r.attrs, escape(r.text))
+				}
 			}
+			b.WriteString("</text>\n")
 		}
-		b.WriteString("</text>\n")
 	}
 	b.WriteString("</g>\n</svg>\n")
 	return b.Bytes()
 }
 
-// run is a span of cells sharing one style.
+// run is a span of cells sharing one style and cell width.
 type run struct {
-	text string
-	cols int
-	bg   string // CSS color, empty for the Theme background
-	// attrs is the SVG attribute string for the span, empty when the span
-	// uses the default style.
-	attrs string
+	text  string
+	cols  int
+	wide  bool
+	bg    string // CSS color, empty for the Theme background
+	attrs string // SVG attribute string, empty for default style
+	deco  bool   // whether underline or strikethrough is set
 }
 
-// rowRuns splits a row (Scrollback rows first, then Screen rows) into style
-// runs and returns them with the number of display columns the row's text
-// spans once trailing blanks are removed.
-func rowRuns(e emulator.Emulator, th theme.Theme, row, scrollback int) ([]run, int) {
-	var runs []run
-	for col := 0; col < e.Cols(); {
+// textSegment is a contiguous group of runs with the same cell-width class
+// (either all 1-column cells or all 2-column cells), anchored at its starting
+// column so wide glyphs never skew narrow columns in the same row.
+type textSegment struct {
+	col  int
+	cols int
+	runs []run
+}
+
+// rowRuns splits a row (Scrollback rows first, then Screen rows) into background
+// runs and column-anchored text segments with trailing unstyled blanks removed.
+func rowRuns(e emulator.Emulator, th theme.Theme, row, scrollback, maxCols int) ([]run, []textSegment) {
+	var bgRuns []run
+	var cellRuns []run
+	for col := 0; col < maxCols; {
 		var c emulator.Cell
 		if row < scrollback {
 			c = e.ScrollbackCell(row, col)
@@ -104,34 +116,50 @@ func rowRuns(e emulator.Emulator, th theme.Theme, row, scrollback int) ([]run, i
 			text = " "
 		}
 		bg, attrs := style(th, c)
-		if n := len(runs); n > 0 && runs[n-1].bg == bg && runs[n-1].attrs == attrs {
-			runs[n-1].text += text
-			runs[n-1].cols += c.Width
+		deco := c.Attrs&(emulator.AttrUnderline|emulator.AttrStrikethrough) != 0
+		wide := c.Width > 1
+		if n := len(bgRuns); n > 0 && bgRuns[n-1].bg == bg {
+			bgRuns[n-1].cols += c.Width
 		} else {
-			runs = append(runs, run{text: text, cols: c.Width, bg: bg, attrs: attrs})
+			bgRuns = append(bgRuns, run{cols: c.Width, bg: bg})
 		}
+		cellRuns = append(cellRuns, run{text: text, cols: c.Width, wide: wide, attrs: attrs, deco: deco})
 		col += c.Width
 	}
-	trimmed := trimRuns(runs)
-	cols := 0
-	for _, r := range trimmed {
-		cols += ansi.StringWidth(r.text)
-	}
-	return runs, cols
-}
-
-// trimRuns removes trailing blanks (and runs left empty) from the row text.
-func trimRuns(runs []run) []run {
-	runs = append([]run(nil), runs...)
-	for len(runs) > 0 {
-		last := &runs[len(runs)-1]
-		last.text = strings.TrimRight(last.text, " ")
-		if last.text != "" {
-			break
+	// Trim trailing unstyled blank cells (preserving spaces with underline/strikethrough).
+	for len(cellRuns) > 0 {
+		last := cellRuns[len(cellRuns)-1]
+		if last.text == " " && !last.deco {
+			cellRuns = cellRuns[:len(cellRuns)-1]
+			continue
 		}
-		runs = runs[:len(runs)-1]
+		break
 	}
-	return runs
+	if len(cellRuns) == 0 {
+		return bgRuns, nil
+	}
+	var segments []textSegment
+	col := 0
+	for _, cr := range cellRuns {
+		if n := len(segments); n > 0 && segments[n-1].runs[0].wide == cr.wide {
+			seg := &segments[n-1]
+			seg.cols += cr.cols
+			if m := len(seg.runs); m > 0 && seg.runs[m-1].attrs == cr.attrs {
+				seg.runs[m-1].text += cr.text
+				seg.runs[m-1].cols += cr.cols
+			} else {
+				seg.runs = append(seg.runs, cr)
+			}
+		} else {
+			segments = append(segments, textSegment{
+				col:  col,
+				cols: cr.cols,
+				runs: []run{cr},
+			})
+		}
+		col += cr.cols
+	}
+	return bgRuns, segments
 }
 
 // style resolves a cell's background color and SVG text attributes.

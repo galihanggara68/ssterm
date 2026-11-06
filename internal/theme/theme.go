@@ -12,26 +12,37 @@ type Theme struct {
 	BoldAsBright bool
 }
 
-// Default is the built-in dark Theme.
-func Default() Theme {
-	return Theme{Name: "dark", Foreground: "#c5c8c6", Background: "#1d1f21",
+var builtins = []Theme{
+	{
+		Name: "dark", Foreground: "#c5c8c6", Background: "#1d1f21",
 		ANSI: [16]string{
 			"#1d1f21", "#cc6666", "#b5bd68", "#f0c674", "#81a2be", "#b294bb", "#8abeb7", "#c5c8c6",
 			"#969896", "#d54e53", "#b9ca4a", "#e7c547", "#7aa6da", "#c397d8", "#70c0b1", "#eaeaea",
 		},
 		BoldAsBright: true,
-	}
+	},
+}
+
+// Default is the built-in dark Theme.
+func Default() Theme {
+	return builtins[0]
 }
 
 // Lookup returns the Theme with the given name.
 func Lookup(name string) (Theme, bool) {
-	if name == "dark" {
-		return Default(), true
+	for _, t := range builtins {
+		if t.Name == name {
+			return t, true
+		}
 	}
 	return Theme{}, false
 }
 
 // Names lists the names of all available Themes.
 func Names() []string {
-	return []string{"dark"}
+	out := make([]string, len(builtins))
+	for i, t := range builtins {
+		out[i] = t.Name
+	}
+	return out
 }
