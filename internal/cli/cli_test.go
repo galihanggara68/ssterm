@@ -108,16 +108,13 @@ func TestHelpListsFlags(t *testing.T) {
 	}
 }
 
-func TestGolden(t *testing.T) {
-	in, err := os.ReadFile("testdata/plain.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	out, _, code := run(t, string(in))
+func golden(t *testing.T, name, stdin string, args ...string) {
+	t.Helper()
+	out, _, code := run(t, stdin, args...)
 	if code != 0 {
 		t.Fatalf("exit code = %d", code)
 	}
-	golden := "testdata/plain.svg"
+	golden := "testdata/" + name + ".svg"
 	if *update {
 		if err := os.WriteFile(golden, []byte(out), 0o644); err != nil {
 			t.Fatal(err)
@@ -130,4 +127,53 @@ func TestGolden(t *testing.T) {
 	if out != string(want) {
 		t.Fatalf("output differs from %s (run with -update after reviewing)\n got:\n%s\nwant:\n%s", golden, out, want)
 	}
+}
+
+func TestGolden(t *testing.T) {
+	in, err := os.ReadFile("testdata/plain.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	golden(t, "plain", string(in))
+}
+
+func assertTexts(t *testing.T, stdin string, want []string, args ...string) {
+	t.Helper()
+	out, _, code := run(t, stdin, args...)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	got := svgTexts(t, out)
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("texts = %q, want %q", got, want)
+	}
+}
+
+func TestCarriageReturnOverwritesYieldFinalLine(t *testing.T) {
+	assertTexts(t, "10%\r50%\r100%\ndone\n", []string{"100%", "done"})
+}
+
+func TestCarriageReturnShorterOverwriteKeepsTail(t *testing.T) {
+	assertTexts(t, "abcdef\rXY\n", []string{"XYcdef"})
+	assertTexts(t, "ab\x1b[H\x1b[0J\x1b[3Jz", []string{"z"}, "--cols", "4", "--rows", "2")
+}
+
+func TestCursorMovementAndErase(t *testing.T) {
+	assertTexts(t, "one\ntwo\nthree\x1b[2A\x1b[2K\rTWO\x1b[B\x1b[3D\x1b[K!!", []string{"TWO", "!!", "three"})
+	assertTexts(t, "hello world\x1b[6D\x1b[K", []string{"hello"}, "--cols", "20")
+	assertTexts(t, "ab\x1b[2J\x1b[Hz", []string{"ab", "z"}, "--cols", "4", "--rows", "2")
+	assertTexts(t, "ab\x1b[H\x1b[0J\x1b[3Jz", []string{"z"}, "--cols", "4", "--rows", "2")
+}
+
+func TestScrollbackIncludedByDefault(t *testing.T) {
+	assertTexts(t, "1\n2\n3\n4\n5\n", []string{"1", "2", "3", "4", "5"}, "--rows", "2")
+}
+
+func TestAlternateScreenYieldsFinalGrid(t *testing.T) {
+	assertTexts(t, "main\n\x1b[?1049h\x1b[Halt\x1b[2;1Hscreen", []string{"alt", "screen"}, "--rows", "2")
+	assertTexts(t, "main\n\x1b[?1049h\x1b[Halt\x1b[?1049l", []string{"main"}, "--rows", "2")
+}
+
+func TestGoldenCursorOutput(t *testing.T) {
+	golden(t, "progress", "Downloading\n 10%\r 55%\r100%\nstatus: ok\x1b[3D\x1b[Kdone\n1\n2\n3\n", "--rows", "4")
 }

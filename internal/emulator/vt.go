@@ -1,6 +1,9 @@
 package emulator
 
-import "github.com/charmbracelet/x/vt"
+import (
+	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/vt"
+)
 
 type vtEmulator struct {
 	term       *vt.SafeEmulator
@@ -17,8 +20,15 @@ func (e *vtEmulator) Write(p []byte) (int, error) { return e.term.Write(p) }
 func (e *vtEmulator) Cols() int                   { return e.cols }
 func (e *vtEmulator) Rows() int                   { return e.rows }
 
-func (e *vtEmulator) Cell(row, col int) Cell {
-	c := e.term.CellAt(col, row)
+func (e *vtEmulator) Cell(row, col int) Cell { return toCell(e.term.CellAt(col, row)) }
+
+func (e *vtEmulator) ScrollbackLen() int { return e.term.ScrollbackLen() }
+
+func (e *vtEmulator) ScrollbackCell(row, col int) Cell {
+	return toCell(e.term.ScrollbackCellAt(col, row))
+}
+
+func toCell(c *uv.Cell) Cell {
 	if c == nil {
 		return Cell{Width: 1}
 	}

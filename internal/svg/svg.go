@@ -26,13 +26,14 @@ func Render(e emulator.Emulator, th theme.Theme, font string) []byte {
 	if font == "" {
 		font = DefaultFont
 	}
-	w, h := e.Cols()*cellW, e.Rows()*cellH
+	sb := e.ScrollbackLen()
+	w, h := e.Cols()*cellW, (sb+e.Rows())*cellH
 	var b bytes.Buffer
 	fmt.Fprintf(&b, `<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" viewBox="0 0 %d %d">`+"\n", w, h, w, h)
 	fmt.Fprintf(&b, `<rect width="%d" height="%d" fill="%s"/>`+"\n", w, h, th.Background)
 	fmt.Fprintf(&b, `<g font-family="%s" font-size="%d" fill="%s" xml:space="preserve">`+"\n", escape(font), fontSize, th.Foreground)
-	for row := 0; row < e.Rows(); row++ {
-		line, cols := rowText(e, row)
+	for row := 0; row < sb+e.Rows(); row++ {
+		line, cols := rowText(e, row, sb)
 		if line == "" {
 			continue
 		}
@@ -43,12 +44,17 @@ func Render(e emulator.Emulator, th theme.Theme, font string) []byte {
 	return b.Bytes()
 }
 
-// rowText returns the row's text with trailing blanks removed and the number
+// rowText returns the row's (Scrollback rows first, then Screen rows) text with trailing blanks removed and the number
 // of columns it spans.
-func rowText(e emulator.Emulator, row int) (string, int) {
+func rowText(e emulator.Emulator, row, scrollback int) (string, int) {
 	var sb strings.Builder
 	for col := 0; col < e.Cols(); {
-		c := e.Cell(row, col)
+		var c emulator.Cell
+		if row < scrollback {
+			c = e.ScrollbackCell(row, col)
+		} else {
+			c = e.Cell(row-scrollback, col)
+		}
 		if c.Text == "" {
 			sb.WriteByte(' ')
 		} else {

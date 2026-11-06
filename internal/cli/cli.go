@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 
@@ -85,13 +86,21 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return 0
 }
 
+// escapeSeq matches CSI and OSC escape sequences.
+var escapeSeq = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]`)
+
 // fitContent sizes the Screen grid to plain text (without a trailing
 // newline): the longest line and the number of lines.
 func fitContent(data []byte) (cols, rows int) {
 	lines := strings.Split(string(data), "\r\n")
 	for _, l := range lines {
-		if n := utf8.RuneCountInString(l); n > cols {
-			cols = n
+		// Escape sequences take no columns, and \r overwrites: the widest
+		// segment between carriage returns is a good estimate.
+		l = escapeSeq.ReplaceAllString(l, "")
+		for seg := range strings.SplitSeq(l, "\r") {
+			if n := utf8.RuneCountInString(seg); n > cols {
+				cols = n
+			}
 		}
 	}
 	return max(cols, 1), max(len(lines), 1)
