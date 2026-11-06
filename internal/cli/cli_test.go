@@ -4,11 +4,17 @@ import (
 	"bytes"
 	"encoding/xml"
 	"flag"
+	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/creack/pty"
 
 	"ssterm/internal/cli"
 )
@@ -73,26 +79,6 @@ func svgTexts(t *testing.T, svg string) []string {
 		t.Fatalf("output is not an SVG document:\n%s", svg)
 	}
 	return texts
-}
-
-// svgTextLengths returns the textLength attribute of every <text> element.
-func svgTextLengths(t *testing.T, svg string) []string {
-	t.Helper()
-	dec := xml.NewDecoder(strings.NewReader(svg))
-	var out []string
-	for {
-		tok, err := dec.Token()
-		if err != nil {
-			return out
-		}
-		if e, ok := tok.(xml.StartElement); ok && e.Name.Local == "text" {
-			for _, a := range e.Attr {
-				if a.Name.Local == "textLength" {
-					out = append(out, a.Value)
-				}
-			}
-		}
-	}
 }
 
 func TestPipedPlainTextProducesSVGWithSelectableText(t *testing.T) {
@@ -241,16 +227,12 @@ func TestScrollbackIncludedByDefault(t *testing.T) {
 }
 
 func TestAlternateScreenYieldsFinalGrid(t *testing.T) {
-	// Main-screen scrollback (1, 2, 3 on 2 rows) must not leak when the final
-	// state is on the alternate screen.
 	assertTexts(t, "1\n2\n3\n\x1b[?1049h\x1b[Halt\x1b[2;1Hscreen", []string{"alt", "screen"}, "--rows", "2")
 	assertTexts(t, "main\n\x1b[?1049h\x1b[Halt\x1b[?1049l", []string{"main"}, "--rows", "2")
-	// Auto-sized alternate screen addressing row 2 without newlines must not clip.
 	assertTexts(t, "\x1b[?1049h\x1b[Htop\x1b[2;1Hbot", []string{"top", "bot"})
 }
 
 func TestAutoSizeFitsPostEmulationContent(t *testing.T) {
-	// Erased tail should not inflate the auto-sized width beyond "status:done" (11 cols = 99px).
 	out, _, code := run(t, "status: ok\x1b[3D\x1b[Kdone\n")
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
@@ -282,6 +264,7 @@ func TestSizingAndErrors(t *testing.T) {
 		{name: "zero rows rejected", stdin: "x\n", args: []string{"--rows", "0"}, wantCode: 2, wantStderr: []string{"--rows"}},
 		{name: "unknown flag", stdin: "x\n", args: []string{"--bogus"}, wantCode: 2, wantStderr: []string{"bogus", "Usage:"}},
 		{name: "unknown theme lists names", stdin: "x\n", args: []string{"--theme", "nope"}, wantCode: 2, wantStderr: []string{"nope", "dark"}},
+		{name: "unsupported output extension", stdin: "x\n", args: []string{"-o", "out.jpg"}, wantCode: 2, wantStderr: []string{"ssterm:", ".jpg"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -337,8 +320,6 @@ func TestWideCharactersOccupyTwoCells(t *testing.T) {
 	if !strings.Contains(out, `width="63"`) {
 		t.Fatalf("screen is not 7 columns wide:\n%s", out)
 	}
-	// Wide chars and ASCII in the same row are anchored to their column x positions:
-	// "日本語" at x=0 (width 54) and "x" at x=54 (width 9).
 	if !strings.Contains(out, `<text x="0" y="13" textLength="54"`) || !strings.Contains(out, `<text x="54" y="13" textLength="9"`) {
 		t.Fatalf("expected wide and narrow segments anchored at x=0 and x=54:\n%s", out)
 	}
@@ -361,7 +342,6 @@ func TestOSC8HyperlinksBecomeSVGLinks(t *testing.T) {
 	if got := svgTexts(t, out); !slices.Equal(got, []string{"visit example or go.dev now"}) {
 		t.Fatalf("texts = %q, want [visit example or go.dev now]", got)
 	}
-	// Display width is 27 cols (243px); OSC 8 URL bytes must not inflate width.
 	if !strings.Contains(out, `width="243"`) {
 		t.Fatalf("expected auto-sized width 243 (27 cols), got:\n%s", out)
 	}
@@ -394,5 +374,410 @@ func TestHyperlinksAndFontGolden(t *testing.T) {
 	golden(t, "links", string(in), "--font", "JetBrains Mono, monospace")
 }
 
+func runPNG(t *testing.T, stdin string, args ...string) (image.Image, []byte) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "shot.png")
+	allArgs := append([]string{"-o", path}, args...)
+	out, stderr, code := run(t, stdin, allArgs...)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %q", code, stderr)
+	}
+	if out != "" {
+		t.Fatalf("stdout = %q, want empty when -o is given", out)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := png.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("png.Decode: %v", err)
+	}
+	return img, data
+}
 
+func TestOutputFlagWritesPNGWithMatchingDimensions(t *testing.T) {
+	img, _ := runPNG(t, "hello\nworld\n")
+	if got := img.Bounds().Size(); got != image.Pt(5*9, 2*18) {
+		t.Fatalf("size = %v, want %v", got, image.Pt(5*9, 2*18))
+	}
+	got := color.NRGBAModel.Convert(img.At(0, 0)).(color.NRGBA)
+	want := color.NRGBA{R: 0x1d, G: 0x1f, B: 0x21, A: 0xff}
+	if got != want {
+		t.Fatalf("bg pixel at (0,0) = %#v, want %#v", got, want)
+	}
+}
 
+func cellColors(img image.Image, col, row int) map[color.NRGBA]int {
+	counts := make(map[color.NRGBA]int)
+	for y := row * 18; y < (row+1)*18; y++ {
+		for x := col * 9; x < (col+1)*9; x++ {
+			c := color.NRGBAModel.Convert(img.At(x, y)).(color.NRGBA)
+			counts[c]++
+		}
+	}
+	return counts
+}
+
+func TestPNGColorsAndAttributes(t *testing.T) {
+	darkBg := color.NRGBA{R: 0x1d, G: 0x1f, B: 0x21, A: 0xff}
+	darkFg := color.NRGBA{R: 0xc5, G: 0xc8, B: 0xc6, A: 0xff}
+	ansiRed := color.NRGBA{R: 0xcc, G: 0x66, B: 0x66, A: 0xff}
+	ansiBlue := color.NRGBA{R: 0x81, G: 0xa2, B: 0xbe, A: 0xff}
+	brightRed := color.NRGBA{R: 0xd5, G: 0x4e, B: 0x53, A: 0xff}
+
+	t.Run("ansi fg and bg", func(t *testing.T) {
+		img, _ := runPNG(t, "\x1b[31;44mM\x1b[0m \n", "--cols", "2")
+		c0 := cellColors(img, 0, 0)
+		if c0[ansiBlue] == 0 {
+			t.Fatalf("cell (0,0) missing blue background %#v: %v", ansiBlue, c0)
+		}
+		if c0[ansiRed] == 0 {
+			t.Fatalf("cell (0,0) missing red foreground %#v: %v", ansiRed, c0)
+		}
+		c1 := cellColors(img, 1, 0)
+		if c1[darkBg] != 9*18 {
+			t.Fatalf("blank cell (1,0) should be all default bg %#v: %v", darkBg, c1)
+		}
+	})
+
+	t.Run("256-color and truecolor", func(t *testing.T) {
+		img, _ := runPNG(t, "\x1b[38;5;196mM\x1b[38;2;18;52;86mM\n")
+		if cellColors(img, 0, 0)[color.NRGBA{R: 0xff, G: 0x00, B: 0x00, A: 0xff}] == 0 {
+			t.Fatalf("cell (0,0) missing 256-color #ff0000")
+		}
+		if cellColors(img, 1, 0)[color.NRGBA{R: 0x12, G: 0x34, B: 0x56, A: 0xff}] == 0 {
+			t.Fatalf("cell (1,0) missing truecolor #123456")
+		}
+	})
+
+	t.Run("bold as bright and font variants", func(t *testing.T) {
+		img, _ := runPNG(t, "\x1b[1;31mM\x1b[0;3mM\n")
+		if cellColors(img, 0, 0)[brightRed] == 0 {
+			t.Fatalf("bold palette 1 should use bright red %#v: %v", brightRed, cellColors(img, 0, 0))
+		}
+		if cellColors(img, 1, 0)[darkFg] == 0 {
+			t.Fatalf("italic cell missing foreground %#v", darkFg)
+		}
+	})
+
+	t.Run("reverse and dim", func(t *testing.T) {
+		img, _ := runPNG(t, "\x1b[7mM\x1b[0;2mM\n")
+		rev := cellColors(img, 0, 0)
+		if rev[darkFg] == 0 || rev[darkBg] == 0 {
+			t.Fatalf("reverse cell should have swapped fg/bg: %v", rev)
+		}
+		if got := color.NRGBAModel.Convert(img.At(0, 0)).(color.NRGBA); got != darkFg {
+			t.Fatalf("reversed cell corner = %#v, want %#v", got, darkFg)
+		}
+		dimFg := color.NRGBA{
+			R: uint8((uint16(darkFg.R) + uint16(darkBg.R)) / 2),
+			G: uint8((uint16(darkFg.G) + uint16(darkBg.G)) / 2),
+			B: uint8((uint16(darkFg.B) + uint16(darkBg.B)) / 2),
+			A: 0xff,
+		}
+		if cellColors(img, 1, 0)[dimFg] == 0 {
+			t.Fatalf("dim cell missing blended foreground %#v: %v", dimFg, cellColors(img, 1, 0))
+		}
+	})
+
+	t.Run("underline and strikethrough on space", func(t *testing.T) {
+		img, _ := runPNG(t, "\x1b[4m \x1b[0;9m \x1b[0;5mM\x1b[0m\n")
+		if cellColors(img, 0, 0)[darkFg] < 9 {
+			t.Fatalf("underlined space should draw line in fg %#v: %v", darkFg, cellColors(img, 0, 0))
+		}
+		if cellColors(img, 1, 0)[darkFg] < 9 {
+			t.Fatalf("strikethrough space should draw line in fg %#v: %v", darkFg, cellColors(img, 1, 0))
+		}
+		if cellColors(img, 2, 0)[darkFg] == 0 {
+			t.Fatalf("static blink cell should render foreground %#v: %v", darkFg, cellColors(img, 2, 0))
+		}
+	})
+}
+
+func TestPNGOutputIsDeterministicAndCaseInsensitive(t *testing.T) {
+	_, b1 := runPNG(t, "\x1b[1;32mhello\x1b[0m world\nsecond line\n")
+	upperPath := filepath.Join(t.TempDir(), "SHOT.PNG")
+	_, stderr, code := run(t, "\x1b[1;32mhello\x1b[0m world\nsecond line\n", "-o", upperPath)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %q", code, stderr)
+	}
+	b2, err := os.ReadFile(upperPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(b1, b2) {
+		t.Fatalf("two PNG runs produced different bytes (%d vs %d)", len(b1), len(b2))
+	}
+}
+
+func TestBuiltinThemes(t *testing.T) {
+	tests := []struct {
+		theme      string
+		stdin      string
+		wantSubstr []string
+	}{
+		{
+			theme:      "dark",
+			stdin:      "\x1b[1;31mx\n",
+			wantSubstr: []string{`fill="#1d1f21"`, `fill="#c5c8c6"`, `fill="#d54e53"`},
+		},
+		{
+			theme:      "light",
+			stdin:      "\x1b[1;31mx\n",
+			wantSubstr: []string{`fill="#ffffff"`, `fill="#4d4d4c"`, `fill="#c82829"`},
+		},
+		{
+			theme:      "macos",
+			stdin:      "\x1b[31mx\n",
+			wantSubstr: []string{`fill="#ffffff"`, `fill="#000000"`, `fill="#990000"`},
+		},
+		{
+			theme:      "iterm2",
+			stdin:      "\x1b[31mx\n",
+			wantSubstr: []string{`fill="#000000"`, `fill="#c7c7c7"`, `fill="#c91b00"`},
+		},
+		{
+			theme:      "gnome",
+			stdin:      "\x1b[1;31mx\n",
+			wantSubstr: []string{`fill="#2e3436"`, `fill="#d3d7cf"`, `fill="#cc0000"`},
+		},
+		{
+			theme:      "windows",
+			stdin:      "\x1b[31mx\n",
+			wantSubstr: []string{`fill="#0c0c0c"`, `fill="#cccccc"`, `fill="#c50f1f"`},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.theme, func(t *testing.T) {
+			out, stderr, code := run(t, tc.stdin, "--theme", tc.theme)
+			if code != 0 {
+				t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
+			}
+			for _, want := range tc.wantSubstr {
+				if !strings.Contains(out, want) {
+					t.Errorf("theme %q output missing %s:\n%s", tc.theme, want, out)
+				}
+			}
+		})
+	}
+
+	_, stderr, code := run(t, "x\n", "--theme", "nonexistent")
+	if code == 0 {
+		t.Fatalf("expected non-zero exit code for unknown theme")
+	}
+	for _, name := range []string{"dark", "light", "macos", "iterm2", "gnome", "windows"} {
+		if !strings.Contains(stderr, name) {
+			t.Errorf("unknown theme error missing built-in %q:\n%s", name, stderr)
+		}
+	}
+}
+
+func TestThemeJSONFileAndValidation(t *testing.T) {
+	validJSON := `{
+  "name": "house",
+  "foreground": "#eeeeee",
+  "background": "#112233",
+  "bold_as_bright": true,
+  "ansi": [
+    "#000000", "#110000", "#001100", "#111100",
+    "#000011", "#110011", "#001111", "#aaaaaa",
+    "#555555", "#ff1122", "#11ff22", "#ffff22",
+    "#1122ff", "#ff22ff", "#22ffff", "#ffffff"
+  ],
+  "chrome": {
+    "style": "macos",
+    "background": "#223344",
+    "foreground": "#eeeeee",
+    "buttons": ["#ff5f56", "#ffbd2e", "#27c93f"]
+  }
+}`
+	dir := t.TempDir()
+	validPath := filepath.Join(dir, "house.json")
+	if err := os.WriteFile(validPath, []byte(validJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, stderr, code := run(t, "\x1b[31mhi\x1b[1;31m!\n", "--theme", validPath)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	for _, want := range []string{`fill="#112233"`, `fill="#eeeeee"`, `fill="#110000"`, `fill="#ff1122"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("custom theme SVG missing %s:\n%s", want, out)
+		}
+	}
+
+	invalidCases := []struct {
+		name      string
+		json      string
+		wantField string
+	}{
+		{
+			name: "missing foreground",
+			json: `{
+				"background": "#112233",
+				"ansi": ["#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000"]
+			}`,
+			wantField: "foreground",
+		},
+		{
+			name: "invalid background hex",
+			json: `{
+				"foreground": "#ffffff",
+				"background": "not-a-color",
+				"ansi": ["#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000"]
+			}`,
+			wantField: "background",
+		},
+		{
+			name: "ansi wrong length",
+			json: `{
+				"foreground": "#ffffff",
+				"background": "#000000",
+				"ansi": ["#000000", "#111111"]
+			}`,
+			wantField: "ansi",
+		},
+		{
+			name: "ansi invalid element",
+			json: `{
+				"foreground": "#ffffff",
+				"background": "#000000",
+				"ansi": ["#000000","#000000","#000000","#GGGGGG","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000"]
+			}`,
+			wantField: "ansi[3]",
+		},
+		{
+			name: "unknown top-level field",
+			json: `{
+				"foreground": "#ffffff",
+				"background": "#000000",
+				"ansi": ["#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000"],
+				"bogus_field": true
+			}`,
+			wantField: "bogus_field",
+		},
+		{
+			name: "wrong type on bold_as_bright",
+			json: `{
+				"foreground": "#ffffff",
+				"background": "#000000",
+				"bold_as_bright": "yes",
+				"ansi": ["#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000"]
+			}`,
+			wantField: "bold_as_bright",
+		},
+		{
+			name: "invalid chrome button color",
+			json: `{
+				"foreground": "#ffffff",
+				"background": "#000000",
+				"ansi": ["#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000"],
+				"chrome": {"buttons": ["#ff5f56", "bad", "#27c93f"]}
+			}`,
+			wantField: "chrome.buttons[1]",
+		},
+	}
+
+	for i, tc := range invalidCases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := filepath.Join(dir, "bad-"+string(rune('a'+i))+".json")
+			if err := os.WriteFile(p, []byte(tc.json), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			out, stderr, code := run(t, "x\n", "--theme", p)
+			if code == 0 {
+				t.Fatalf("expected non-zero exit code for %s, got 0", tc.name)
+			}
+			if out != "" {
+				t.Errorf("expected empty stdout on error, got %q", out)
+			}
+			if !strings.Contains(stderr, tc.wantField) {
+				t.Errorf("stderr %q does not name offending field %q", stderr, tc.wantField)
+			}
+		})
+	}
+
+	_, stderr, code = run(t, "x\n", "--theme", filepath.Join(dir, "missing.json"))
+	if code == 0 || !strings.Contains(stderr, "missing.json") {
+		t.Fatalf("expected error mentioning missing.json, got code=%d stderr=%q", code, stderr)
+	}
+}
+
+func TestPTYRunsCommandWithTTYAndCapturesFinalScreen(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("PTY mode is not supported on Windows")
+	}
+	out, stderr, code := run(t, "", "--", "sh", "-c", `test -t 1 && printf "\033[32mhello\033[0m\nworld\rfinal\n"`)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %q)", code, stderr)
+	}
+	if got := svgTexts(t, out); !slices.Equal(got, []string{"hello", "final"}) {
+		t.Fatalf("texts = %q, want [hello final]", got)
+	}
+	if !strings.Contains(out, `fill="#b5bd68">hello</tspan>`) {
+		t.Fatalf("expected green ANSI color on hello:\n%s", out)
+	}
+	if !strings.Contains(out, `width="720" height="432"`) {
+		t.Fatalf("expected 80x24 default PTY size (720x432), got:\n%s", out)
+	}
+}
+
+func TestPTYSizingFromTerminalAndFlagOverrides(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("PTY mode is not supported on Windows")
+	}
+	ptmx, tty, err := pty.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = ptmx.Close()
+		_ = tty.Close()
+	}()
+	if err := pty.Setsize(ptmx, &pty.Winsize{Cols: 50, Rows: 12}); err != nil {
+		t.Fatal(err)
+	}
+	var outBuf, errBuf bytes.Buffer
+	if code := cli.Run([]string{"--", "sh", "-c", `printf "sized"`}, tty, &outBuf, &errBuf); code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %q)", code, errBuf.String())
+	}
+	if !strings.Contains(outBuf.String(), `width="450" height="216"`) {
+		t.Fatalf("expected 50x12 terminal size (450x216), got:\n%s", outBuf.String())
+	}
+
+	out, stderr, code := run(t, "", "--cols", "4", "--rows", "2", "--", "sh", "-c", `printf "111122223333"`)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %q)", code, stderr)
+	}
+	if got := svgTexts(t, out); !slices.Equal(got, []string{"2222", "3333"}) {
+		t.Fatalf("texts = %q, want [2222 3333]", got)
+	}
+	if !strings.Contains(out, `width="36" height="36"`) {
+		t.Fatalf("expected 4x2 override size (36x36), got:\n%s", out)
+	}
+}
+
+func TestPTYExitCodePropagationAndErrors(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("PTY mode is not supported on Windows")
+	}
+	out, stderr, code := run(t, "", "--", "sh", "-c", `printf "fail\n"; exit 7`)
+	if code != 7 {
+		t.Fatalf("exit code = %d, want 7 (stderr: %q)", code, stderr)
+	}
+	if got := svgTexts(t, out); !slices.Equal(got, []string{"fail"}) {
+		t.Fatalf("texts = %q, want [fail]", got)
+	}
+
+	out, stderr, code = run(t, "", "--")
+	if code == 0 || out != "" || !strings.Contains(stderr, "ssterm:") {
+		t.Fatalf("missing command: code=%d out=%q stderr=%q", code, out, stderr)
+	}
+
+	out, stderr, code = run(t, "", "--", "/nonexistent/ssterm-no-such-binary")
+	if code == 0 || out != "" || !strings.Contains(stderr, "ssterm:") {
+		t.Fatalf("bad command: code=%d out=%q stderr=%q", code, out, stderr)
+	}
+}

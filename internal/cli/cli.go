@@ -8,11 +8,15 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
 
 	"ssterm/internal/emulator"
+	"ssterm/internal/png"
+	"ssterm/internal/source"
 	"ssterm/internal/svg"
 	"ssterm/internal/theme"
 )
@@ -36,6 +40,13 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	cols := fs.Int("cols", 0, "screen width in columns (default: fit content)")
 	rows := fs.Int("rows", 0, "screen height in rows (default: fit content)")
 	font := fs.String("font", "", "SVG font-family stack")
+	var cmdArgs []string
+	ptyMode := false
+	if idx := slices.Index(args, "--"); idx >= 0 {
+		ptyMode = true
+		cmdArgs = args[idx+1:]
+		args = args[:idx]
+	}
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -60,65 +71,114 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "ssterm: --rows must be greater than 0")
 		return 2
 	}
-
-	th, ok := theme.Lookup(*themeName)
-	if !ok {
-		fmt.Fprintf(stderr, "ssterm: unknown theme %q (valid themes: %s)\n", *themeName, strings.Join(theme.Names(), ", "))
+	ext := strings.ToLower(filepath.Ext(*output))
+	if *output != "" && ext != ".svg" && ext != ".png" {
+		fmt.Fprintf(stderr, "ssterm: unsupported output format %q (expected .svg or .png)\n", filepath.Ext(*output))
 		return 2
 	}
 
-	data, err := io.ReadAll(stdin)
+	th, err := theme.Resolve(*themeName)
 	if err != nil {
-		fmt.Fprintf(stderr, "ssterm: reading stdin: %v\n", err)
-		return 1
-	}
-	if len(data) == 0 {
-		fmt.Fprintln(stderr, "ssterm: empty stdin")
-		return 1
-	}
-	data = bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
-	data = bytes.TrimSuffix(data, []byte("\n"))
-	data = bytes.ReplaceAll(data, []byte("\n"), []byte("\r\n"))
-
-	w, h := fitEstimate(data)
-	if colsSet {
-		w = *cols
-	}
-	if rowsSet {
-		h = *rows
-	}
-	em := emulator.New(w, h)
-	if _, err := em.Write(data); err != nil {
 		fmt.Fprintf(stderr, "ssterm: %v\n", err)
-		return 1
+		return 2
 	}
 
-	renderCols, renderRows := usedBounds(em, rowsSet)
-	if colsSet {
-		renderCols = *cols
-	}
-	if rowsSet {
-		renderRows = *rows
+	var (
+		em                     emulator.Emulator
+		renderCols, renderRows int
+		exitCode               int
+	)
+	if ptyMode {
+		if len(cmdArgs) == 0 {
+			fmt.Fprintln(stderr, "ssterm: missing command after --")
+			return 2
+		}
+		w, h := source.TermSize(stdin, stdout, stderr)
+		if colsSet {
+			w = *cols
+		}
+		if rowsSet {
+			h = *rows
+		}
+		var data []byte
+		var err error
+		data, exitCode, err = source.RunPTY(cmdArgs, w, h)
+		if err != nil {
+			fmt.Fprintf(stderr, "ssterm: %v\n", err)
+			return exitCode
+		}
+		em = emulator.New(w, h)
+		if _, err := em.Write(data); err != nil {
+			fmt.Fprintf(stderr, "ssterm: %v\n", err)
+			return 1
+		}
+		renderCols = w
+		if rowsSet {
+			renderRows = *rows
+		}
+	} else {
+		data, err := io.ReadAll(stdin)
+		if err != nil {
+			fmt.Fprintf(stderr, "ssterm: reading stdin: %v\n", err)
+			return 1
+		}
+		if len(data) == 0 {
+			fmt.Fprintln(stderr, "ssterm: empty stdin")
+			return 1
+		}
+		data = bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
+		data = bytes.TrimSuffix(data, []byte("\n"))
+		data = bytes.ReplaceAll(data, []byte("\n"), []byte("\r\n"))
+
+		w, h := fitEstimate(data)
+		if colsSet {
+			w = *cols
+		}
+		if rowsSet {
+			h = *rows
+		}
+		em = emulator.New(w, h)
+		if _, err := em.Write(data); err != nil {
+			fmt.Fprintf(stderr, "ssterm: %v\n", err)
+			return 1
+		}
+
+		renderCols, renderRows = usedBounds(em, rowsSet)
+		if colsSet {
+			renderCols = *cols
+		}
+		if rowsSet {
+			renderRows = *rows
+		}
 	}
 
-	img := svg.RenderWithOptions(em, th, svg.Options{
-		Font:           *font,
-		SkipScrollback: rowsSet,
-		Cols:           renderCols,
-		Rows:           renderRows,
-	})
+	var img []byte
+	if strings.EqualFold(filepath.Ext(*output), ".png") {
+		img = png.RenderWithOptions(em, th, png.Options{
+			SkipScrollback: rowsSet,
+			Cols:           renderCols,
+			Rows:           renderRows,
+		})
+	} else {
+		img = svg.RenderWithOptions(em, th, svg.Options{
+			Font:           *font,
+			SkipScrollback: rowsSet,
+			Cols:           renderCols,
+			Rows:           renderRows,
+		})
+	}
 	if *output != "" {
 		if err := os.WriteFile(*output, img, 0o644); err != nil {
 			fmt.Fprintf(stderr, "ssterm: %v\n", err)
 			return 1
 		}
-		return 0
+		return exitCode
 	}
 	if _, err := stdout.Write(img); err != nil {
 		fmt.Fprintf(stderr, "ssterm: %v\n", err)
 		return 1
 	}
-	return 0
+	return exitCode
 }
 
 // fitEstimate gives an initial upper-bound Screen grid size before emulation so
