@@ -22,6 +22,19 @@ import (
 
 var update = flag.Bool("update", false, "rewrite golden files")
 
+func TestMain(m *testing.M) {
+	tmp, err := os.MkdirTemp("", "ssterm-test-xdg-*")
+	if err == nil {
+		_ = os.Setenv("XDG_CONFIG_HOME", tmp)
+		_ = os.Unsetenv("SSTERM_CONFIG")
+	}
+	code := m.Run()
+	if tmp != "" {
+		_ = os.RemoveAll(tmp)
+	}
+	os.Exit(code)
+}
+
 func run(t *testing.T, stdin string, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
 	var out, errb bytes.Buffer
@@ -1502,5 +1515,194 @@ func TestChromeWindowTitleSVGAndPNG(t *testing.T) {
 	}
 	if !strings.Contains(customOut, `fill="#123456" textLength="54" lengthAdjust="spacing">custom</text>`) {
 		t.Fatalf("expected custom theme title to fall back to theme.foreground #123456:\n%s", customOut)
+	}
+}
+
+func TestUserConfigDefaultsAndCLIOverridePrecedence(t *testing.T) {
+	// 1. Missing default config file in $XDG_CONFIG_HOME/ssterm/config.json is silently ignored.
+	emptyXDG := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", emptyXDG)
+	t.Setenv("SSTERM_CONFIG", "")
+	out, stderr, code := run(t, "hello\n")
+	if code != 0 || stderr != "" {
+		t.Fatalf("missing default config: code=%d stderr=%q", code, stderr)
+	}
+	if !strings.Contains(out, `width="45" height="18"`) || !strings.Contains(out, `fill="#1d1f21"`) {
+		t.Fatalf("expected Faithful dark defaults when config.json does not exist:\n%s", out)
+	}
+
+	// 2. Loading defaults from $XDG_CONFIG_HOME/ssterm/config.json applies theme, font, padding, trim, chrome, shadow.
+	cfgDir := filepath.Join(emptyXDG, "ssterm")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(cfgDir, "config.json")
+	cfgJSON := `{
+		"theme": "macos",
+		"font": "JetBrains Mono, monospace",
+		"padding": 10,
+		"trim": true,
+		"chrome": true,
+		"shadow": true
+	}`
+	if err := os.WriteFile(cfgPath, []byte(cfgJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, stderr, code = run(t, "\n  hi  \n", "--cols", "8", "--rows", "4")
+	if code != 0 {
+		t.Fatalf("config defaults: code=%d stderr=%q", code, stderr)
+	}
+	// Trimmed "hi" is 2x1 (18x18) + 2*10 padding = 38x38 + 32 Chrome = 38x70 + 2*20 shadow = 78x110.
+	for _, want := range []string{
+		`width="78" height="110"`,
+		`fill="#e5e5e5"`,
+		`fill="#ffffff"`,
+		`<filter id="shadow"`,
+		`font-family="JetBrains Mono, monospace"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("config defaults SVG missing %s:\n%s", want, out)
+		}
+	}
+
+	// 3. Explicit CLI flags (including boolean false and padding 0) override config.json.
+	overrideOut, stderr, code := run(t, "\n  hi  \n", "--cols", "8", "--rows", "4",
+		"--theme", "dark",
+		"--font", "Fira Code",
+		"--padding", "0",
+		"--trim=false",
+		"--chrome=false",
+		"--shadow=false",
+	)
+	if code != 0 {
+		t.Fatalf("CLI override: code=%d stderr=%q", code, stderr)
+	}
+	// Untrimmed 8x4 = 72x72, no padding, no Chrome, no shadow, dark theme (#1d1f21), Fira Code font.
+	for _, want := range []string{
+		`width="72" height="72"`,
+		`<rect width="72" height="72" fill="#1d1f21"/>`,
+		`font-family="Fira Code"`,
+	} {
+		if !strings.Contains(overrideOut, want) {
+			t.Fatalf("CLI override SVG missing %s:\n%s", want, overrideOut)
+		}
+	}
+	if strings.Contains(overrideOut, `<filter id="shadow"`) || strings.Contains(overrideOut, `#e5e5e5`) {
+		t.Fatalf("CLI override did not disable shadow or macos Chrome:\n%s", overrideOut)
+	}
+
+	// 4. $SSTERM_CONFIG overrides $XDG_CONFIG_HOME/ssterm/config.json and supports "shell": true.
+	customCfg := filepath.Join(t.TempDir(), "my-config.json")
+	if err := os.WriteFile(customCfg, []byte(`{"theme": "gnome", "padding": 4, "shell": true}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SSTERM_CONFIG", customCfg)
+	out, stderr, code = run(t, "hi\n")
+	if code != 0 {
+		t.Fatalf("SSTERM_CONFIG: code=%d stderr=%q", code, stderr)
+	}
+	// "hi" is 2x1 (18x18) + 2*4 padding = 26x26, gnome background #2e3436.
+	if !strings.Contains(out, `width="26" height="26"`) || !strings.Contains(out, `fill="#2e3436"`) {
+		t.Fatalf("expected SSTERM_CONFIG gnome theme with padding 4 (26x26):\n%s", out)
+	}
+	if runtime.GOOS != "windows" {
+		if bashPath, err := exec.LookPath("bash"); err == nil {
+			home := t.TempDir()
+			if err := os.WriteFile(filepath.Join(home, ".bashrc"), []byte("alias cfg_alias='printf \"from-cfg-shell\\n\"'\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("HOME", home)
+			t.Setenv("SHELL", bashPath)
+			ptyOut, stderr, code := run(t, "", "--", "cfg_alias")
+			if code != 0 {
+				t.Fatalf("config shell=true PTY: code=%d stderr=%q", code, stderr)
+			}
+			if got := svgTexts(t, ptyOut); !slices.Equal(got, []string{"from-cfg-shell"}) {
+				t.Fatalf("config shell=true texts = %q, want [from-cfg-shell]", got)
+			}
+		}
+	}
+}
+
+func TestUserConfigValidationErrors(t *testing.T) {
+	// Missing explicit $SSTERM_CONFIG file fails with exit code 2.
+	missingPath := filepath.Join(t.TempDir(), "does-not-exist.json")
+	t.Setenv("SSTERM_CONFIG", missingPath)
+	out, stderr, code := run(t, "hi\n")
+	if code != 2 || out != "" || !strings.Contains(stderr, missingPath) {
+		t.Fatalf("missing SSTERM_CONFIG: code=%d out=%q stderr=%q", code, out, stderr)
+	}
+
+	cases := []struct {
+		name      string
+		body      string
+		wantError string
+	}{
+		{
+			name:      "malformed JSON",
+			body:      `{"theme":`,
+			wantError: "invalid JSON",
+		},
+		{
+			name:      "top-level null",
+			body:      `null`,
+			wantError: "expected object",
+		},
+		{
+			name:      "unknown field",
+			body:      `{"theme": "dark", "unknown_flag": true}`,
+			wantError: "unknown_flag",
+		},
+		{
+			name:      "null theme",
+			body:      `{"theme": null}`,
+			wantError: "theme",
+		},
+		{
+			name:      "wrong type padding",
+			body:      `{"padding": "12"}`,
+			wantError: "padding",
+		},
+		{
+			name:      "float padding",
+			body:      `{"padding": 1.5}`,
+			wantError: "padding",
+		},
+		{
+			name:      "negative padding",
+			body:      `{"padding": -4}`,
+			wantError: "--padding",
+		},
+		{
+			name:      "wrong type chrome",
+			body:      `{"chrome": "yes"}`,
+			wantError: "chrome",
+		},
+		{
+			name:      "unknown theme value",
+			body:      `{"theme": "no-such-theme"}`,
+			wantError: "no-such-theme",
+		},
+	}
+
+	dir := t.TempDir()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := filepath.Join(dir, strings.ReplaceAll(tc.name, " ", "_")+".json")
+			if err := os.WriteFile(p, []byte(tc.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("SSTERM_CONFIG", p)
+			out, stderr, code := run(t, "hi\n")
+			if code != 2 {
+				t.Fatalf("%s: exit code = %d, want 2 (stderr: %q)", tc.name, code, stderr)
+			}
+			if out != "" {
+				t.Fatalf("%s: expected empty stdout, got %q", tc.name, out)
+			}
+			if !strings.Contains(stderr, tc.wantError) {
+				t.Fatalf("%s: stderr %q does not contain %q", tc.name, stderr, tc.wantError)
+			}
+		})
 	}
 }

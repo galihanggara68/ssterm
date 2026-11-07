@@ -3,6 +3,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -72,15 +73,38 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	var colsSet, rowsSet bool
+	cfg, err := loadUserConfig()
+	if err != nil {
+		fmt.Fprintf(stderr, "ssterm: %v\n", err)
+		return 2
+	}
+	setFlags := make(map[string]bool)
 	fs.Visit(func(f *flag.Flag) {
-		switch f.Name {
-		case "cols":
-			colsSet = true
-		case "rows":
-			rowsSet = true
-		}
+		setFlags[f.Name] = true
 	})
+	if cfg.Theme != nil && !setFlags["theme"] {
+		*themeName = *cfg.Theme
+	}
+	if cfg.Font != nil && !setFlags["font"] {
+		*font = *cfg.Font
+	}
+	if cfg.Padding != nil && !setFlags["padding"] {
+		*padding = *cfg.Padding
+	}
+	if cfg.Trim != nil && !setFlags["trim"] {
+		*trim = *cfg.Trim
+	}
+	if cfg.Chrome != nil && !setFlags["chrome"] {
+		*chrome = *cfg.Chrome
+	}
+	if cfg.Shadow != nil && !setFlags["shadow"] {
+		*shadow = *cfg.Shadow
+	}
+	if cfg.Shell != nil && !setFlags["shell"] && !setFlags["s"] {
+		*shell = *cfg.Shell
+	}
+
+	colsSet, rowsSet := setFlags["cols"], setFlags["rows"]
 	if colsSet && *cols <= 0 {
 		fmt.Fprintln(stderr, "ssterm: --cols must be greater than 0")
 		return 2
@@ -260,4 +284,83 @@ func usedBounds(em emulator.Emulator, skipScrollback bool) (cols, rows int) {
 		}
 	}
 	return max(cols, 1), max(rows, 1)
+}
+
+type userConfig struct {
+	Theme   *string
+	Font    *string
+	Padding *int
+	Trim    *bool
+	Chrome  *bool
+	Shadow  *bool
+	Shell   *bool
+}
+
+func loadUserConfig() (userConfig, error) {
+	var path string
+	explicit := false
+	if envPath := os.Getenv("SSTERM_CONFIG"); envPath != "" {
+		path = envPath
+		explicit = true
+	} else if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		path = filepath.Join(xdg, "ssterm", "config.json")
+	} else if dir, err := os.UserConfigDir(); err == nil && dir != "" {
+		path = filepath.Join(dir, "ssterm", "config.json")
+	} else {
+		return userConfig{}, nil
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if !explicit && errors.Is(err, os.ErrNotExist) {
+			return userConfig{}, nil
+		}
+		return userConfig{}, fmt.Errorf("config %s: %w", path, err)
+	}
+
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		return userConfig{}, fmt.Errorf("config %s: invalid JSON: expected object", path)
+	}
+	var entries map[string]json.RawMessage
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return userConfig{}, fmt.Errorf("config %s: invalid JSON: %w", path, err)
+	}
+
+	var cfg userConfig
+	strFields := map[string]**string{
+		"theme": &cfg.Theme,
+		"font":  &cfg.Font,
+	}
+	boolFields := map[string]**bool{
+		"trim":   &cfg.Trim,
+		"chrome": &cfg.Chrome,
+		"shadow": &cfg.Shadow,
+		"shell":  &cfg.Shell,
+	}
+	for k, v := range entries {
+		isNull := bytes.Equal(bytes.TrimSpace(v), []byte("null"))
+		switch {
+		case strFields[k] != nil:
+			var s string
+			if isNull || json.Unmarshal(v, &s) != nil {
+				return userConfig{}, fmt.Errorf("config %s: invalid field %q: expected string", path, k)
+			}
+			*strFields[k] = &s
+		case boolFields[k] != nil:
+			var b bool
+			if isNull || json.Unmarshal(v, &b) != nil {
+				return userConfig{}, fmt.Errorf("config %s: invalid field %q: expected boolean", path, k)
+			}
+			*boolFields[k] = &b
+		case k == "padding":
+			var n int
+			if isNull || bytes.ContainsAny(v, `".eE`) || json.Unmarshal(v, &n) != nil {
+				return userConfig{}, fmt.Errorf("config %s: invalid field %q: expected integer", path, k)
+			}
+			cfg.Padding = &n
+		default:
+			return userConfig{}, fmt.Errorf("config %s: unknown field %q", path, k)
+		}
+	}
+	return cfg, nil
 }
