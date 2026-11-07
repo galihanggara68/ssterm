@@ -120,7 +120,7 @@ func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte
 		baseline := y0 + cellH - 5
 		// Pass 1: draw all non-default cell backgrounds in the row.
 		for col := 0; col < lay.Cols; {
-			c := cellAt(e, row, col, lay.SB)
+			c := enhance.CellAt(e, lay.SB, row, col)
 			cw := max(c.Width, 1)
 			_, bg := resolveColors(th, c, defFg, defBg)
 			if bg != defBg {
@@ -131,7 +131,7 @@ func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte
 		}
 		// Pass 2: draw glyphs and text decorations on top of row backgrounds.
 		for col := 0; col < lay.Cols; {
-			c := cellAt(e, row, col, lay.SB)
+			c := enhance.CellAt(e, lay.SB, row, col)
 			cw := max(c.Width, 1)
 			x0 := lay.ContentX + col*cellW
 			fg, _ := resolveColors(th, c, defFg, defBg)
@@ -215,13 +215,6 @@ func fillCircle(img *image.RGBA, cx, cy, r int, col color.RGBA) {
 			}
 		}
 	}
-}
-
-func cellAt(e emulator.Emulator, row, col, sb int) emulator.Cell {
-	if row < sb {
-		return e.ScrollbackCell(row, col)
-	}
-	return e.Cell(row-sb, col)
 }
 
 func resolveColors(th theme.Theme, c emulator.Cell, defFg, defBg color.RGBA) (fg, bg color.RGBA) {

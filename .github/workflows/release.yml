@@ -1,0 +1,74 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Test, Build & Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run quality gates
+        run: |
+          test -z "$(gofmt -l .)"
+          go vet ./...
+          go test -race ./...
+
+      - name: Build release archives
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          mkdir -p dist
+          platforms=(
+            "linux/amd64"
+            "linux/arm64"
+            "darwin/amd64"
+            "darwin/arm64"
+            "windows/amd64"
+            "windows/arm64"
+          )
+          for platform in "${platforms[@]}"; do
+            GOOS="${platform%/*}"
+            GOARCH="${platform#*/}"
+            stage="dist/ssterm_${VERSION}_${GOOS}_${GOARCH}"
+            mkdir -p "$stage"
+            bin="ssterm"
+            if [ "$GOOS" = "windows" ]; then
+              bin="ssterm.exe"
+            fi
+            CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
+              go build -trimpath -ldflags="-s -w" -o "${stage}/${bin}" ./cmd/ssterm
+            cp README.md "${stage}/"
+            if [ "$GOOS" = "windows" ]; then
+              (cd dist && zip -rq "ssterm_${VERSION}_${GOOS}_${GOARCH}.zip" "ssterm_${VERSION}_${GOOS}_${GOARCH}")
+            else
+              tar -C dist -czf "dist/ssterm_${VERSION}_${GOOS}_${GOARCH}.tar.gz" "ssterm_${VERSION}_${GOOS}_${GOARCH}"
+            fi
+            rm -rf "$stage"
+          done
+          (cd dist && sha256sum *.tar.gz *.zip > checksums.txt)
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt

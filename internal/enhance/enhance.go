@@ -187,10 +187,10 @@ type subGrid struct {
 	cells      [][]emulator.Cell
 }
 
-func (g *subGrid) Write(p []byte) (int, error)         { return len(p), nil }
-func (g *subGrid) Cols() int                           { return g.cols }
-func (g *subGrid) Rows() int                           { return g.rows }
-func (g *subGrid) ScrollbackLen() int                  { return 0 }
+func (g *subGrid) Write(p []byte) (int, error)               { return len(p), nil }
+func (g *subGrid) Cols() int                                 { return g.cols }
+func (g *subGrid) Rows() int                                 { return g.rows }
+func (g *subGrid) ScrollbackLen() int                        { return 0 }
 func (g *subGrid) ScrollbackCell(row, col int) emulator.Cell { return emulator.Cell{Width: 1} }
 
 func (g *subGrid) Cell(row, col int) emulator.Cell {
@@ -211,7 +211,7 @@ func Trim(em emulator.Emulator, skipScrollback bool, cols, rows int) emulator.Em
 	)
 	for r := 0; r < totalRows; r++ {
 		for c := 0; c < totalCols; {
-			cell := rawCell(em, sb, r, c)
+			cell := CellAt(em, sb, r, c)
 			cw := max(cell.Width, 1)
 			if !IsBlankCell(cell) {
 				endC := min(c+cw-1, totalCols-1)
@@ -262,7 +262,9 @@ func ViewDims(em emulator.Emulator, skipScrollback bool, cols, rows int) (sb, to
 	return sb, max(totalCols, 1), max(totalRows, 1)
 }
 
-func rawCell(em emulator.Emulator, sb, row, col int) emulator.Cell {
+// CellAt returns the cell at (row, col) from Scrollback (when row < sb) or the
+// active Screen grid.
+func CellAt(em emulator.Emulator, sb, row, col int) emulator.Cell {
 	if row < sb {
 		return em.ScrollbackCell(row, col)
 	}
@@ -279,7 +281,7 @@ func extract(em emulator.Emulator, sb, totalCols, totalRows, x, y, w, h int) *su
 		srcR := y + dy
 		if srcR >= 0 && srcR < totalRows {
 			for srcC := 0; srcC < totalCols; {
-				c := rawCell(em, sb, srcR, srcC)
+				c := CellAt(em, sb, srcR, srcC)
 				cw := max(c.Width, 1)
 				switch {
 				case cw == 2 && srcC+1 == x && w > 0:

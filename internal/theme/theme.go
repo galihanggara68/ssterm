@@ -12,7 +12,7 @@ import (
 
 // Chrome defines the Chrome (title bar and buttons) for a Theme.
 type Chrome struct {
-	Layout     string    `json:"style,omitempty"`
+	Layout     string    `json:"layout,omitempty"`
 	Background string    `json:"background,omitempty"`
 	Foreground string    `json:"foreground,omitempty"`
 	Buttons    [3]string `json:"buttons,omitempty"`
@@ -238,14 +238,16 @@ func LoadFile(path string) (Theme, error) {
 }
 
 func parseChrome(path string, data json.RawMessage) (Chrome, error) {
-	raw, err := parseObjectKeys(path, "chrome", data, "style", "background", "foreground", "buttons")
+	raw, err := parseObjectKeys(path, "chrome", data, "layout", "style", "background", "foreground", "buttons")
 	if err != nil {
 		return Chrome{}, err
 	}
 	c := Default().Chrome
-	if v, ok := raw["style"]; ok {
-		if isJSONNull(v) || json.Unmarshal(v, &c.Layout) != nil || c.Layout == "" {
-			return Chrome{}, fmt.Errorf("theme %s: invalid field \"chrome.style\": expected non-empty string", path)
+	for _, key := range []string{"style", "layout"} {
+		if v, ok := raw[key]; ok {
+			if isJSONNull(v) || json.Unmarshal(v, &c.Layout) != nil || c.Layout == "" {
+				return Chrome{}, fmt.Errorf("theme %s: invalid field \"chrome.%s\": expected non-empty string", path, key)
+			}
 		}
 	}
 	if v, ok := raw["background"]; ok {

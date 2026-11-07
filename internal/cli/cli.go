@@ -46,6 +46,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	padding := fs.Int("padding", 0, "padding in pixels around the Screen grid")
 	chrome := fs.Bool("chrome", false, "draw the Theme's Chrome")
 	shadow := fs.Bool("shadow", false, "draw a drop shadow around the Screenshot")
+	shell := fs.Bool("shell", false, "run PTY command through interactive $SHELL -i -c (loads .bashrc/.zshrc)")
+	fs.BoolVar(shell, "s", false, "shorthand for --shell")
 	var cmdArgs []string
 	ptyMode := false
 	if idx := slices.Index(args, "--"); idx >= 0 {
@@ -119,7 +121,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if rowsSet {
 			h = *rows
 		}
-		data, exitCode, err = source.RunPTY(cmdArgs, w, h)
+		data, exitCode, err = source.RunPTY(cmdArgs, w, h, *shell)
 		if err != nil {
 			fmt.Fprintf(stderr, "ssterm: %v\n", err)
 			return exitCode
@@ -235,12 +237,7 @@ func usedBounds(em emulator.Emulator, skipScrollback bool) (cols, rows int) {
 	for r := 0; r < totalRows; r++ {
 		rowUsed := false
 		for c := 0; c < em.Cols(); {
-			var cell emulator.Cell
-			if r < sb {
-				cell = em.ScrollbackCell(r, c)
-			} else {
-				cell = em.Cell(r-sb, c)
-			}
+			cell := enhance.CellAt(em, sb, r, c)
 			if !enhance.IsBlankCell(cell) {
 				rowUsed = true
 				if end := c + cell.Width; end > cols {

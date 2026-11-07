@@ -135,12 +135,7 @@ func rowRuns(e emulator.Emulator, th theme.Theme, row, scrollback, maxCols int) 
 	var bgRuns []run
 	var cellRuns []run
 	for col := 0; col < maxCols; {
-		var c emulator.Cell
-		if row < scrollback {
-			c = e.ScrollbackCell(row, col)
-		} else {
-			c = e.Cell(row-scrollback, col)
-		}
+		c := enhance.CellAt(e, scrollback, row, col)
 		text := c.Text
 		if text == "" {
 			text = " "

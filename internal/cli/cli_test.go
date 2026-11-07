@@ -8,6 +8,7 @@ import (
 	"image/color"
 	"image/png"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -122,7 +123,7 @@ func TestHelpListsFlags(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
 	}
-	for _, f := range []string{"-o", "--theme", "--cols", "--rows", "--font", "--trim", "--crop", "--padding", "--chrome", "--shadow"} {
+	for _, f := range []string{"-o", "--theme", "--cols", "--rows", "--font", "--trim", "--crop", "--padding", "--chrome", "--shadow", "--shell", "-s"} {
 		if !strings.Contains(stderr, f) {
 			t.Errorf("help does not mention %s:\n%s", f, stderr)
 		}
@@ -764,7 +765,7 @@ func TestPTYRunsCommandWithTTYAndRendersFinalScreen(t *testing.T) {
 	}
 
 	// PTY mode renders only the final Screen grid at exit (not scrolled-off lines).
-	out, stderr, code = run(t, "", "--cols", "10", "--rows", "2", "--", "sh", "-c", `printf "1\n2\n3"` )
+	out, stderr, code = run(t, "", "--cols", "10", "--rows", "2", "--", "sh", "-c", `printf "1\n2\n3"`)
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr: %q)", code, stderr)
 	}
@@ -828,6 +829,101 @@ func TestPTYExitCodePropagationAndErrors(t *testing.T) {
 	out, stderr, code = run(t, "", "--", "/nonexistent/ssterm-no-such-binary")
 	if code == 0 || out != "" || !strings.Contains(stderr, "ssterm:") {
 		t.Fatalf("bad command: code=%d out=%q stderr=%q", code, out, stderr)
+	}
+}
+
+func TestPTYShellModeLoadsProfileAliasesAndFunctions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("PTY mode is not supported on Windows")
+	}
+	t.Setenv("TERM", "dumb")
+	t.Setenv("COLORTERM", "")
+	t.Setenv("CLICOLOR_FORCE", "")
+	t.Setenv("FORCE_COLOR", "")
+	envOut, stderr, code := run(t, "", "--", "sh", "-c", `printf "%s|%s|%s|%s\n" "$TERM" "$COLORTERM" "$CLICOLOR_FORCE" "$FORCE_COLOR"`)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %q)", code, stderr)
+	}
+	if got := svgTexts(t, envOut); !slices.Equal(got, []string{"xterm-256color|truecolor|1|1"}) {
+		t.Fatalf("color env vars = %q, want [xterm-256color|truecolor|1|1]", got)
+	}
+
+	bashPath, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not found in PATH")
+	}
+	home := t.TempDir()
+	bashrc := "alias my_colored_alias='printf \"\\033[32malias-ok\\033[0m\\n\"'\n" +
+		"my_bashrc_fn() { printf \"fn:%s\\n\" \"$1\"; }\n"
+	if err := os.WriteFile(filepath.Join(home, ".bashrc"), []byte(bashrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("SHELL", bashPath)
+
+	out, stderr, code := run(t, "", "--shell", "--", "my_colored_alias")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %q)", code, stderr)
+	}
+	if got := svgTexts(t, out); !slices.Equal(got, []string{"alias-ok"}) {
+		t.Fatalf("texts = %q, want [alias-ok]", got)
+	}
+	if !strings.Contains(out, `fill="#b5bd68">alias-ok</tspan>`) {
+		t.Fatalf("expected green ANSI color from alias:\n%s", out)
+	}
+
+	out, stderr, code = run(t, "", "-s", "--", "my_bashrc_fn", "it's ok")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %q)", code, stderr)
+	}
+	if got := svgTexts(t, out); !slices.Equal(got, []string{"fn:it's ok"}) {
+		t.Fatalf("texts = %q, want [fn:it's ok]", got)
+	}
+
+	if zshPath, err := exec.LookPath("zsh"); err == nil {
+		if err := os.WriteFile(filepath.Join(home, ".zshrc"), []byte("my_zsh_fn() { printf \"zsh:%s\\n\" \"$1\"; }\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("SHELL", zshPath)
+		zOut, stderr, code := run(t, "", "-s", "--", "my_zsh_fn", "works")
+		if code != 0 {
+			t.Fatalf("zsh exit code = %d, want 0 (stderr: %q)", code, stderr)
+		}
+		if got := svgTexts(t, zOut); !slices.Equal(got, []string{"zsh:works"}) {
+			t.Fatalf("zsh texts = %q, want [zsh:works]", got)
+		}
+	}
+
+	if shPath, err := exec.LookPath("sh"); err == nil {
+		t.Setenv("SHELL", shPath)
+		sOut, stderr, code := run(t, "", "-s", "--", "printf 'sh-fallback\n'")
+		if code != 0 {
+			t.Fatalf("sh exit code = %d, want 0 (stderr: %q)", code, stderr)
+		}
+		if !slices.Contains(svgTexts(t, sOut), "sh-fallback") {
+			t.Fatalf("sh texts = %q, want to contain sh-fallback", svgTexts(t, sOut))
+		}
+	}
+}
+
+func TestWindowsPTYUnsupportedAndPipedMode(t *testing.T) {
+	// CRLF piped Source (Windows line endings) renders cleanly on all platforms.
+	out, stderr, code := run(t, "\x1b[32mwin-line-1\x1b[0m\r\nwin-line-2\r\n")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %q)", code, stderr)
+	}
+	if got := svgTexts(t, out); !slices.Equal(got, []string{"win-line-1", "win-line-2"}) {
+		t.Fatalf("texts = %q, want [win-line-1 win-line-2]", got)
+	}
+	if runtime.GOOS == "windows" {
+		out, stderr, code := run(t, "", "--", "cmd", "/c", "echo hi")
+		if code == 0 || out != "" {
+			t.Fatalf("expected non-zero exit and empty stdout on Windows PTY, got code=%d out=%q", code, out)
+		}
+		want := "PTY mode (--) is not supported on Windows; pipe output to ssterm instead"
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("Windows PTY stderr = %q, want to contain %q", stderr, want)
+		}
 	}
 }
 
@@ -1214,4 +1310,3 @@ func TestShadowAndChromeCombinedSVGAndPNG(t *testing.T) {
 		t.Fatalf("combined PNG size = %v, want (74, 106)", got)
 	}
 }
-
