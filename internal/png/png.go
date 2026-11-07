@@ -175,7 +175,7 @@ func discoverSystemFontPaths() []string {
 				return nil
 			}
 			ext := strings.ToLower(filepath.Ext(p))
-			if (ext == ".ttf" || ext == ".otf") && !seen[p] {
+			if (ext == ".ttf" || ext == ".otf") && !seen[p] && isCandidateFallbackFont(p) {
 				seen[p] = true
 				paths = append(paths, p)
 			}
@@ -186,6 +186,20 @@ func discoverSystemFontPaths() []string {
 		return fontPriority(a) - fontPriority(b)
 	})
 	return paths
+}
+
+func isCandidateFallbackFont(path string) bool {
+	base := strings.ToLower(filepath.Base(path))
+	for _, kw := range []string{
+		"nerd", "symbol", "icon", "dejavusansmono", "notosansmono", "notomono",
+		"consola", "cascadia", "jetbrains", "fira", "meslo", "hack", "ubuntu",
+		"zedmono", "menlo", "sfmono", "freemono", "liberationmono", "unifont",
+	} {
+		if strings.Contains(base, kw) {
+			return true
+		}
+	}
+	return false
 }
 
 func fontPriority(path string) int {

@@ -8,6 +8,9 @@ on:
 permissions:
   contents: write
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   release:
     name: Test, Build & Release
@@ -54,7 +57,7 @@ jobs:
             fi
             CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
               go build -trimpath -ldflags="-s -w" -o "${stage}/${bin}" ./cmd/ssterm
-            cp README.md "${stage}/"
+            cp README.md LICENSE "${stage}/"
             if [ "$GOOS" = "windows" ]; then
               (cd dist && zip -rq "ssterm_${VERSION}_${GOOS}_${GOARCH}.zip" "ssterm_${VERSION}_${GOOS}_${GOARCH}")
             else
@@ -68,6 +71,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             dist/*.tar.gz
             dist/*.zip

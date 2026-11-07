@@ -146,8 +146,9 @@ func golden(t *testing.T, name, stdin string, args ...string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out != string(want) {
-		t.Fatalf("output differs from %s (run with -update after reviewing)\n got:\n%s\nwant:\n%s", golden, out, want)
+	wantStr := strings.ReplaceAll(string(want), "\r\n", "\n")
+	if out != wantStr {
+		t.Fatalf("output differs from %s (run with -update after reviewing)\n got:\n%s\nwant:\n%s", golden, out, wantStr)
 	}
 }
 

@@ -62,20 +62,34 @@ git diff --color=always | ssterm --theme windows --chrome --shadow --padding 16 
 
 ## Installation
 
+### Quick Install (`curl`)
+
+Install the latest release (or pre-release) on Linux, macOS, or Windows (Git Bash / MSYS2):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/galihanggara68/ssterm/main/install.sh | sh
+```
+
+To install a specific version or into a custom directory (e.g. `~/.local/bin`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/galihanggara68/ssterm/main/install.sh | VERSION=v0.1.0-beta.1 INSTALL_DIR=~/.local/bin sh
+```
+
 ### Build from source
 
 Requires Go 1.25+:
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/galihanggara68/ssterm.git
 cd ssterm
 go build -o ssterm ./cmd/ssterm
 ```
 
- Or install directly into `$GOBIN`:
+Or install directly into `$GOBIN`:
 
 ```bash
-go install ./cmd/ssterm
+go install github.com/galihanggara68/ssterm/cmd/ssterm@latest
 ```
 
 ---
@@ -286,3 +300,9 @@ make cross-build  # Verify Linux, macOS, and Windows builds
 make clean        # Remove compiled binaries
 make help         # List all Make targets
 ```
+
+---
+
+## License
+
+Released under the [MIT License](LICENSE).
