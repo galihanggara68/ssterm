@@ -1,8 +1,41 @@
+<div align="center">
+  <img src="assets/logo.svg" alt="ssterm logo" width="600"/>
+</div>
+
 # ssterm
 
 `ssterm` is a self-contained Go CLI that turns terminal output into a **Faithful**, shareable **Screenshot** (SVG by default, or pure-Go PNG) of what a terminal would display.
 
 It runs a real VT terminal emulator ([`charmbracelet/x/vt`](https://github.com/charmbracelet/x/tree/main/vt)) over a **Source** (either piped `stdin` or a command executed inside a pseudo-terminal), builds a 2D **Screen grid** of styled cells (and **Scrollback**), applies a **Theme**, and renders a crisp vector SVG or raster PNG—with zero headless browsers or external runtime dependencies.
+
+---
+
+## Sample Screenshots
+
+### 1. Git Graph & Colored Output (`--theme dark --chrome --shadow --padding 16`)
+```bash
+git -P log --graph --oneline --decorate -n 8 --color=always \
+  | ssterm --theme dark --chrome --shadow --padding 16 -o assets/sample-git-log.svg
+```
+![Git log sample](assets/sample-git-log.svg)
+
+### 2. SGR Styles, 16/256-Color, TrueColor & OSC 8 Links (`--theme iterm2`)
+```bash
+ssterm --theme iterm2 --chrome --shadow --padding 16 -o assets/sample-colors-attributes.svg < palette.ansi
+```
+![Colors and attributes sample](assets/sample-colors-attributes.svg)
+
+### 3. Box-Drawing Tables & Wide CJK / Emoji Alignment (`--theme macos`)
+```bash
+ssterm --theme macos --chrome --shadow --padding 16 -o assets/sample-unicode-table.svg < table.ansi
+```
+![Unicode table and CJK sample](assets/sample-unicode-table.svg)
+
+### 4. Pure-Go PNG Output & Windows Terminal Chrome (`-o ...png --theme windows`)
+```bash
+git diff --color=always | ssterm --theme windows --chrome --shadow --padding 16 -o assets/sample-png-windows.png
+```
+![PNG Windows Terminal sample](assets/sample-png-windows.png)
 
 ---
 
@@ -239,22 +272,6 @@ Enhancements compose in a fixed, predictable pipeline:
 ---
 
 ## Development
-
-### Repository Layout
-
-```text
-cmd/ssterm/         CLI entrypoint (main package)
-internal/
-  cli/              Flag parsing, pipeline orchestration, and integration tests
-  source/           Piped stdin reader and Unix/Windows PTY runner
-  emulator/         Terminal emulator wrapper (charmbracelet/x/vt)
-  enhance/          Trim, crop, layout calculation, and Chrome geometry
-  theme/            Built-in Themes and JSON Theme file loader
-  svg/              SVG Screenshot renderer
-  png/              Pure-Go PNG Screenshot renderer
-docs/               Architecture Decision Records, PRD, and Technical Specification
-GLOSSARY.md         Ubiquitous domain language
-```
 
 ### Quality Gates & Makefile
 

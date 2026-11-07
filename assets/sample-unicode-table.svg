@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="603" height="230" viewBox="0 0 603 230">
+<defs><filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#000000" flood-opacity="0.45"/></filter></defs>
+<rect x="20" y="24" width="563" height="190" fill="#000000" opacity="0.35" filter="url(#shadow)"/>
+<rect x="20" y="20" width="563" height="32" fill="#e5e5e5"/>
+<circle cx="36" cy="36" r="6" fill="#ff5f56"/>
+<circle cx="56" cy="36" r="6" fill="#ffbd2e"/>
+<circle cx="76" cy="36" r="6" fill="#27c93f"/>
+<rect x="20" y="52" width="563" height="158" fill="#ffffff"/>
+<g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, &#39;DejaVu Sans Mono&#39;, monospace" font-size="14" fill="#000000" xml:space="preserve">
+<text x="36" y="81" textLength="531" lengthAdjust="spacing">  <tspan fill="#0000ff" font-weight="bold">╭──────────────────┬──────────────┬──────────┬──────────╮</tspan></text>
+<text x="36" y="99" textLength="531" lengthAdjust="spacing">  <tspan fill="#0000ff" font-weight="bold">│</tspan> <tspan font-weight="bold">Package          </tspan><tspan fill="#0000ff" font-weight="bold">│</tspan> <tspan font-weight="bold">Locale / CJK </tspan><tspan fill="#0000ff" font-weight="bold">│</tspan> <tspan font-weight="bold">Duration </tspan><tspan fill="#0000ff" font-weight="bold">│</tspan> <tspan font-weight="bold">Status   </tspan><tspan fill="#0000ff" font-weight="bold">│</tspan></text>
+<text x="36" y="117" textLength="531" lengthAdjust="spacing">  <tspan fill="#0000ff" font-weight="bold">├──────────────────┼──────────────┼──────────┼──────────┤</tspan></text>
+<text x="36" y="135" textLength="207" lengthAdjust="spacing">  <tspan fill="#0000ff" font-weight="bold">│</tspan> internal/emulator<tspan fill="#0000ff" font-weight="bold">│</tspan> </text>
+<text x="243" y="135" textLength="90" lengthAdjust="spacing">日本語表示</text>
+<text x="333" y="135" textLength="234" lengthAdjust="spacing">   <tspan fill="#0000ff" font-weight="bold">│</tspan>   0.04s  <tspan fill="#0000ff" font-weight="bold">│</tspan> <tspan fill="#00d900" font-weight="bold">✔ PASS</tspan>   <tspan fill="#0000ff" font-weight="bold">│</tspan></text>
+<text x="36" y="153" textLength="207" lengthAdjust="spacing">  <tspan fill="#0000ff" font-weight="bold">│</tspan> internal/svg     <tspan fill="#0000ff" font-weight="bold">│</tspan> </text>
+<text x="243" y="153" textLength="90" lengthAdjust="spacing">한국어지원</text>
+<text x="333" y="153" textLength="234" lengthAdjust="spacing">   <tspan fill="#0000ff" font-weight="bold">│</tspan>   0.08s  <tspan fill="#0000ff" font-weight="bold">│</tspan> <tspan fill="#00d900" font-weight="bold">✔ PASS</tspan>   <tspan fill="#0000ff" font-weight="bold">│</tspan></text>
+<text x="36" y="171" textLength="207" lengthAdjust="spacing">  <tspan fill="#0000ff" font-weight="bold">│</tspan> internal/png     <tspan fill="#0000ff" font-weight="bold">│</tspan> </text>
+<text x="243" y="171" textLength="108" lengthAdjust="spacing">中文终端截图</text>
+<text x="351" y="171" textLength="216" lengthAdjust="spacing"> <tspan fill="#0000ff" font-weight="bold">│</tspan>   0.11s  <tspan fill="#0000ff" font-weight="bold">│</tspan> <tspan fill="#00d900" font-weight="bold">✔ PASS</tspan>   <tspan fill="#0000ff" font-weight="bold">│</tspan></text>
+<text x="36" y="189" textLength="531" lengthAdjust="spacing">  <tspan fill="#0000ff" font-weight="bold">╰──────────────────┴──────────────┴──────────┴──────────╯</tspan></text>
+</g>
+</svg>

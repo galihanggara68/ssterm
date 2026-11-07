@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="927" height="266" viewBox="0 0 927 266">
+<defs><filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#000000" flood-opacity="0.45"/></filter></defs>
+<rect x="20" y="24" width="887" height="226" fill="#000000" opacity="0.35" filter="url(#shadow)"/>
+<rect x="20" y="20" width="887" height="32" fill="#2d2f31"/>
+<circle cx="36" cy="36" r="6" fill="#ff5f56"/>
+<circle cx="56" cy="36" r="6" fill="#ffbd2e"/>
+<circle cx="76" cy="36" r="6" fill="#27c93f"/>
+<rect x="20" y="52" width="887" height="194" fill="#1d1f21"/>
+<g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, &#39;DejaVu Sans Mono&#39;, monospace" font-size="14" fill="#c5c8c6" xml:space="preserve">
+<text x="36" y="81" textLength="801" lengthAdjust="spacing">* <tspan fill="#f0c674">2bd06fd (</tspan><tspan fill="#70c0b1" font-weight="bold">HEAD</tspan><tspan fill="#f0c674"> -&gt; </tspan><tspan fill="#b9ca4a" font-weight="bold">main</tspan><tspan fill="#f0c674">)</tspan> docs(readme): add dogfood 3D logo and feature sample Screenshots</text>
+<text x="36" y="99" textLength="783" lengthAdjust="spacing">* <tspan fill="#f0c674">051d86d</tspan> feat(cli,ci,docs): add --shell PTY mode, README, Makefile, and GitHub Actions</text>
+<text x="36" y="117" textLength="792" lengthAdjust="spacing">* <tspan fill="#f0c674">42826ff</tspan> refactor(enhance): unify Screenshot layout, Chrome geometry, and CellAt lookup</text>
+<text x="36" y="135" textLength="630" lengthAdjust="spacing">* <tspan fill="#f0c674">195171e</tspan> feat(svg,png): add --chrome and --shadow window Enhancements</text>
+<text x="36" y="153" textLength="639" lengthAdjust="spacing">* <tspan fill="#f0c674">ab6e58c</tspan> feat(enhance): add --trim, --crop, and --padding Enhancements</text>
+<text x="36" y="171" textLength="855" lengthAdjust="spacing">* <tspan fill="#f0c674">7e1e86a</tspan> fix(theme,png,cli): refine Theme validation, two-pass PNG backgrounds, and PTY sizing</text>
+<text x="36" y="189" textLength="684" lengthAdjust="spacing">*   <tspan fill="#f0c674">5412d77</tspan> feat(theme,source): add built-in/JSON Themes and Unix PTY Source</text>
+<text x="36" y="207" textLength="18" lengthAdjust="spacing"><tspan fill="#b5bd68">|</tspan><tspan fill="#f0c674">\</tspan></text>
+<text x="36" y="225" textLength="522" lengthAdjust="spacing"><tspan fill="#b5bd68">|</tspan> * <tspan fill="#f0c674">cbd1772</tspan> feat(png): add pure-Go PNG Screenshot renderer</text>
+</g>
+</svg>
