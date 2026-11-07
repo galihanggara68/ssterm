@@ -21,7 +21,7 @@ A pluggable look for a specific terminal: color palette and window frame. Indepe
 _Avoid_: Skin, style, preset
 
 **Chrome**:
-The window decoration (title bar, buttons) drawn around the screen grid. Its look is defined by the Theme; showing it is an Enhancement, off by default.
+The window decoration (title bar, buttons, optional title) drawn around the screen grid. Its look is defined by the Theme; showing it is an Enhancement, off by default.
 _Avoid_: Frame, window decoration
 
 **Scrollback**:

@@ -226,8 +226,9 @@ func LoadFile(path string) (Theme, error) {
 	}
 
 	t.Chrome = Default().Chrome
+	t.Chrome.Foreground = t.Foreground
 	if v, ok := raw["chrome"]; ok {
-		chrome, err := parseChrome(path, v)
+		chrome, err := parseChrome(path, v, t.Chrome)
 		if err != nil {
 			return Theme{}, err
 		}
@@ -237,12 +238,12 @@ func LoadFile(path string) (Theme, error) {
 	return t, nil
 }
 
-func parseChrome(path string, data json.RawMessage) (Chrome, error) {
+func parseChrome(path string, data json.RawMessage, base Chrome) (Chrome, error) {
 	raw, err := parseObjectKeys(path, "chrome", data, "layout", "style", "background", "foreground", "buttons")
 	if err != nil {
 		return Chrome{}, err
 	}
-	c := Default().Chrome
+	c := base
 	for _, key := range []string{"style", "layout"} {
 		if v, ok := raw[key]; ok {
 			if isJSONNull(v) || json.Unmarshal(v, &c.Layout) != nil || c.Layout == "" {

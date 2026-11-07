@@ -30,6 +30,7 @@ type Options struct {
 	// Padding adds pixels of Theme background around all four sides of the Screen grid.
 	Padding int
 	Chrome  bool
+	Title   string
 	Shadow  bool
 }
 
@@ -39,22 +40,29 @@ func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte
 	if font == "" {
 		font = DefaultFont
 	}
-	lay := enhance.ComputeLayout(e, opts.SkipScrollback, opts.Cols, opts.Rows, opts.Padding, opts.Chrome, opts.Shadow)
+	chromeEnabled := opts.Chrome || opts.Title != ""
+	lay := enhance.ComputeLayout(e, opts.SkipScrollback, opts.Cols, opts.Rows, opts.Padding, chromeEnabled, opts.Shadow)
 	var b bytes.Buffer
 	fmt.Fprintf(&b, `<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" viewBox="0 0 %d %d">`+"\n", lay.TotalW, lay.TotalH, lay.TotalW, lay.TotalH)
-	if !opts.Chrome && !opts.Shadow {
+	var chromeSpec enhance.ChromeSpec
+	if !chromeEnabled && !opts.Shadow {
 		fmt.Fprintf(&b, `<rect width="%d" height="%d" fill="%s"/>`+"\n", lay.BodyW, lay.BodyH, th.Background)
 	} else {
 		if opts.Shadow {
 			b.WriteString(`<defs><filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#000000" flood-opacity="0.45"/></filter></defs>` + "\n")
 			fmt.Fprintf(&b, `<rect x="%d" y="%d" width="%d" height="%d" fill="#000000" opacity="0.35" filter="url(#shadow)"/>`+"\n", lay.WinX, lay.WinY+4, lay.WinW, lay.WinH)
 		}
-		if opts.Chrome {
-			writeChrome(&b, th, lay.WinX, lay.WinY, lay.WinW)
+		if chromeEnabled {
+			chromeSpec = enhance.ComputeChrome(th, lay.WinX, lay.WinY, lay.WinW, opts.Title)
+			writeChrome(&b, chromeSpec)
 		}
 		fmt.Fprintf(&b, `<rect x="%d" y="%d" width="%d" height="%d" fill="%s"/>`+"\n", lay.BodyX, lay.BodyY, lay.BodyW, lay.BodyH, th.Background)
 	}
 	fmt.Fprintf(&b, `<g font-family="%s" font-size="%d" fill="%s" xml:space="preserve">`+"\n", escape(font), fontSize, th.Foreground)
+	if chromeSpec.Title != "" {
+		fmt.Fprintf(&b, `<text x="%d" y="%d" fill="%s" textLength="%d" lengthAdjust="spacing">%s</text>`+"\n",
+			chromeSpec.TitleX, chromeSpec.TitleY, chromeSpec.Foreground, chromeSpec.TitleCols*cellW, escape(chromeSpec.Title))
+	}
 	for row := 0; row < lay.TotalRows; row++ {
 		runs, segments := rowRuns(e, th, row, lay.SB, lay.Cols)
 		x := 0
@@ -97,8 +105,7 @@ func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte
 	return b.Bytes()
 }
 
-func writeChrome(b *bytes.Buffer, th theme.Theme, winX, winY, winW int) {
-	spec := enhance.ComputeChrome(th, winX, winY, winW)
+func writeChrome(b *bytes.Buffer, spec enhance.ChromeSpec) {
 	fmt.Fprintf(b, `<rect x="%d" y="%d" width="%d" height="%d" fill="%s"/>`+"\n", spec.X, spec.Y, spec.W, spec.H, spec.Background)
 	for _, btn := range spec.Buttons {
 		if btn.Circle {

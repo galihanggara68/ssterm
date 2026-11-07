@@ -7,16 +7,19 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"ssterm/internal/emulator"
 	"ssterm/internal/theme"
 )
 
 // Cell and Chrome dimensions in pixels.
 const (
-	CellW     = 9
-	CellH     = 18
-	ChromeH   = 32
-	ShadowPad = 20
+	CellW        = 9
+	CellH        = 18
+	ChromeH      = 32
+	ShadowPad    = 20
+	chromeMargin = 72
 )
 
 // Layout holds the pixel geometry of a rendered Screenshot.
@@ -76,25 +79,44 @@ type ChromeButton struct {
 // ChromeSpec describes the resolved title bar and buttons for a Theme's Chrome.
 type ChromeSpec struct {
 	Background string
+	Foreground string
+	Title      string
+	TitleCols  int
+	TitleX     int
+	TitleY     int
 	X, Y, W, H int
 	Buttons    [3]ChromeButton
 }
 
 // ComputeChrome returns the resolved Chrome geometry for th at window origin
 // (winX, winY) and width winW.
-func ComputeChrome(th theme.Theme, winX, winY, winW int) ChromeSpec {
+func ComputeChrome(th theme.Theme, winX, winY, winW int, title string) ChromeSpec {
 	c := th.Chrome
 	bg := c.Background
 	if bg == "" {
 		bg = th.Background
 	}
+	fg := c.Foreground
+	if fg == "" {
+		fg = th.Foreground
+	}
 	cy := winY + ChromeH/2
 	spec := ChromeSpec{
 		Background: bg,
+		Foreground: fg,
 		X:          winX,
 		Y:          winY,
 		W:          winW,
 		H:          ChromeH,
+	}
+	if maxCells := (winW - 2*chromeMargin) / CellW; title != "" && maxCells >= 1 {
+		fitted, cols := truncateTitle(title, maxCells)
+		if fitted != "" {
+			spec.Title = fitted
+			spec.TitleCols = cols
+			spec.TitleX = winX + (winW-cols*CellW)/2
+			spec.TitleY = cy + 5
+		}
 	}
 	switch strings.ToLower(c.Layout) {
 	case "gnome":
@@ -113,6 +135,28 @@ func ComputeChrome(th theme.Theme, winX, winY, winW int) ChromeSpec {
 		}
 	}
 	return spec
+}
+
+func truncateTitle(title string, maxCells int) (string, int) {
+	w := ansi.StringWidth(title)
+	if w <= maxCells {
+		return title, w
+	}
+	if maxCells == 1 {
+		return "…", 1
+	}
+	var b strings.Builder
+	cols := 0
+	for _, r := range title {
+		rw := ansi.StringWidth(string(r))
+		if cols+rw > maxCells-1 {
+			break
+		}
+		b.WriteRune(r)
+		cols += rw
+	}
+	b.WriteString("…")
+	return b.String(), cols + 1
 }
 
 // CropRect specifies a rectangular sub-grid in 0-based cell coordinates.

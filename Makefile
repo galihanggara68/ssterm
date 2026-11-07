@@ -1,6 +1,8 @@
 BINARY  := ssterm
 PKG     := ./cmd/ssterm
 GO      ?= go
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS := -ldflags "-X ssterm/internal/cli.Version=$(VERSION)"
 
 .PHONY: all build install test test-race golden vet fmt fmt-check check cross-build clean help
 
@@ -8,11 +10,11 @@ all: check build
 
 ## build: Compile the ssterm binary into the current directory
 build:
-	$(GO) build -o $(BINARY) $(PKG)
+	$(GO) build $(LDFLAGS) -o $(BINARY) $(PKG)
 
 ## install: Install ssterm into $(GOPATH)/bin or $(GOBIN)
 install:
-	$(GO) install $(PKG)
+	$(GO) install $(LDFLAGS) $(PKG)
 
 ## test: Run all tests
 test:

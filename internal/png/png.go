@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/charmbracelet/x/ansi"
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/gofont/gomono"
 	"golang.org/x/image/font/gofont/gomonobold"
@@ -43,6 +44,7 @@ type Options struct {
 	// Padding adds pixels of Theme background around all four sides of the Screen grid.
 	Padding int
 	Chrome  bool
+	Title   string
 	Shadow  bool
 }
 
@@ -223,7 +225,8 @@ func fontPriority(path string) int {
 
 // RenderWithOptions draws the Screen grid using the Theme and Options.
 func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte {
-	lay := enhance.ComputeLayout(e, opts.SkipScrollback, opts.Cols, opts.Rows, opts.Padding, opts.Chrome, opts.Shadow)
+	chromeEnabled := opts.Chrome || opts.Title != ""
+	lay := enhance.ComputeLayout(e, opts.SkipScrollback, opts.Cols, opts.Rows, opts.Padding, chromeEnabled, opts.Shadow)
 
 	img := image.NewRGBA(image.Rect(0, 0, lay.TotalW, lay.TotalH))
 	defBg := parseHex(th.Background)
@@ -231,8 +234,10 @@ func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte
 	if opts.Shadow {
 		drawShadow(img, lay.WinX, lay.WinY, lay.WinW, lay.WinH)
 	}
-	if opts.Chrome {
-		drawChrome(img, th, lay.WinX, lay.WinY, lay.WinW)
+	var chromeSpec enhance.ChromeSpec
+	if chromeEnabled {
+		chromeSpec = enhance.ComputeChrome(th, lay.WinX, lay.WinY, lay.WinW, opts.Title)
+		drawChrome(img, chromeSpec)
 	}
 	draw.Draw(img, image.Rect(lay.BodyX, lay.BodyY, lay.BodyX+lay.BodyW, lay.BodyY+lay.BodyH), &image.Uniform{C: defBg}, image.Point{}, draw.Src)
 
@@ -252,6 +257,44 @@ func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte
 		}
 	}()
 	var sfntBuf sfnt.Buffer
+
+	faceForRune := func(idx int, r rune) font.Face {
+		pFont := primaryFont(idx)
+		if !hasGlyph(pFont, &sfntBuf, r) {
+			if fb := findFallbackFont(&sfntBuf, r); fb != nil {
+				fbFace, ok := extraFaces[fb]
+				if !ok {
+					if created, err := newFaceFromFont(fb); err == nil {
+						fbFace = created
+						extraFaces[fb] = fbFace
+					}
+				}
+				if fbFace != nil {
+					return fbFace
+				}
+			}
+		}
+		return faces[idx]
+	}
+
+	if chromeSpec.Title != "" {
+		titleFg := parseHex(chromeSpec.Foreground)
+		tx := chromeSpec.TitleX
+		for _, r := range chromeSpec.Title {
+			s := string(r)
+			rw := max(ansi.StringWidth(s), 1)
+			if r != ' ' {
+				d := &font.Drawer{
+					Dst:  img,
+					Src:  &image.Uniform{C: titleFg},
+					Face: faceForRune(0, r),
+					Dot:  fixed.P(tx, chromeSpec.TitleY),
+				}
+				d.DrawString(s)
+			}
+			tx += rw * cellW
+		}
+	}
 
 	for row := 0; row < lay.TotalRows; row++ {
 		y0 := lay.ContentY + row*cellH
@@ -282,23 +325,9 @@ func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte
 				if c.Attrs&emulator.AttrItalic != 0 {
 					idx |= 2
 				}
-				pFont := primaryFont(idx)
 				face := faces[idx]
 				for _, r := range c.Text {
-					if !hasGlyph(pFont, &sfntBuf, r) {
-						if fb := findFallbackFont(&sfntBuf, r); fb != nil {
-							fbFace, ok := extraFaces[fb]
-							if !ok {
-								if created, err := newFaceFromFont(fb); err == nil {
-									fbFace = created
-									extraFaces[fb] = fbFace
-								}
-							}
-							if fbFace != nil {
-								face = fbFace
-							}
-						}
-					}
+					face = faceForRune(idx, r)
 					break
 				}
 				d := &font.Drawer{
@@ -350,8 +379,7 @@ func drawShadow(img *image.RGBA, winX, winY, winW, winH int) {
 	}
 }
 
-func drawChrome(img *image.RGBA, th theme.Theme, winX, winY, winW int) {
-	spec := enhance.ComputeChrome(th, winX, winY, winW)
+func drawChrome(img *image.RGBA, spec enhance.ChromeSpec) {
 	draw.Draw(img, image.Rect(spec.X, spec.Y, spec.X+spec.W, spec.Y+spec.H), &image.Uniform{C: parseHex(spec.Background)}, image.Point{}, draw.Src)
 	for _, btn := range spec.Buttons {
 		col := parseHex(btn.Color)

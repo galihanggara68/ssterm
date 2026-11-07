@@ -123,10 +123,33 @@ func TestHelpListsFlags(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
 	}
-	for _, f := range []string{"-o", "--theme", "--cols", "--rows", "--font", "--trim", "--crop", "--padding", "--chrome", "--shadow", "--shell", "-s"} {
+	for _, f := range []string{"-o", "--theme", "--cols", "--rows", "--font", "--trim", "--crop", "--padding", "--chrome", "--title", "--shadow", "--shell", "-s", "--version", "-v"} {
 		if !strings.Contains(stderr, f) {
 			t.Errorf("help does not mention %s:\n%s", f, stderr)
 		}
+	}
+}
+
+func TestVersionFlag(t *testing.T) {
+	for _, flagName := range []string{"--version", "-v"} {
+		out, stderr, code := run(t, "", flagName)
+		if code != 0 {
+			t.Fatalf("%s: exit code = %d, want 0 (stderr: %q)", flagName, code, stderr)
+		}
+		if stderr != "" {
+			t.Fatalf("%s: unexpected stderr %q", flagName, stderr)
+		}
+		if out != "ssterm dev\n" {
+			t.Fatalf("%s: stdout = %q, want %q", flagName, out, "ssterm dev\n")
+		}
+	}
+
+	orig := cli.Version
+	t.Cleanup(func() { cli.Version = orig })
+	cli.Version = "v0.1.0"
+	out, stderr, code := run(t, "", "--version")
+	if code != 0 || stderr != "" || out != "ssterm v0.1.0\n" {
+		t.Fatalf("custom Version: code=%d out=%q stderr=%q", code, out, stderr)
 	}
 }
 
@@ -761,17 +784,52 @@ func TestPTYRunsCommandWithTTYAndRendersFinalScreen(t *testing.T) {
 	if !strings.Contains(out, `fill="#b5bd68">hello</tspan>`) {
 		t.Fatalf("expected green ANSI color on hello:\n%s", out)
 	}
-	if !strings.Contains(out, `width="720" height="432"`) {
-		t.Fatalf("expected 80x24 default PTY size (720x432), got:\n%s", out)
+	// PTY mode auto-fits to the non-blank usedBounds (5 cols x 2 rows = 45x36 px) when --cols/--rows are not set.
+	if !strings.Contains(out, `width="45" height="36"`) {
+		t.Fatalf("expected auto-fit PTY size 5x2 (45x36), got:\n%s", out)
 	}
 
-	// PTY mode renders only the final Screen grid at exit (not scrolled-off lines).
+	// PTY mode includes Scrollback by default when --rows is not explicitly set.
+	out, stderr, code = run(t, "", "--cols", "10", "--", "sh", "-c", `for i in $(seq 1 30); do printf "line-%02d\n" "$i"; done`)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %q)", code, stderr)
+	}
+	texts := svgTexts(t, out)
+	if len(texts) != 30 || texts[0] != "line-01" || texts[29] != "line-30" {
+		t.Fatalf("expected all 30 lines including Scrollback, got len=%d first=%q last=%q", len(texts), texts[0], texts[len(texts)-1])
+	}
+	if !strings.Contains(out, `width="90" height="540"`) {
+		t.Fatalf("expected 10x30 size (90x540), got:\n%s", out)
+	}
+
+	// When --rows is explicitly set, Scrollback is excluded and only the final Screen grid rows are rendered.
 	out, stderr, code = run(t, "", "--cols", "10", "--rows", "2", "--", "sh", "-c", `printf "1\n2\n3"`)
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr: %q)", code, stderr)
 	}
 	if got := svgTexts(t, out); !slices.Equal(got, []string{"2", "3"}) {
 		t.Fatalf("texts = %q, want [2 3]", got)
+	}
+
+	// Alternate screen in PTY mode excludes main-screen Scrollback and auto-fits the alternate screen content.
+	out, stderr, code = run(t, "", "--", "sh", "-c", `for i in $(seq 1 30); do printf "main-%02d\n" "$i"; done; printf "\033[?1049h\033[Halt-only"`)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %q)", code, stderr)
+	}
+	if got := svgTexts(t, out); !slices.Equal(got, []string{"alt-only"}) {
+		t.Fatalf("alt-screen PTY texts = %q, want [alt-only]", got)
+	}
+	if !strings.Contains(out, `width="72" height="18"`) {
+		t.Fatalf("expected 8x1 auto-fit alt-screen size (72x18), got:\n%s", out)
+	}
+
+	// All-blank PTY output auto-fits to a 1x1 blank Screen grid (9x18 px).
+	out, stderr, code = run(t, "", "--", "sh", "-c", `printf "   \n  \n"`)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %q)", code, stderr)
+	}
+	if !strings.Contains(out, `width="9" height="18"`) {
+		t.Fatalf("expected 1x1 blank PTY size (9x18), got:\n%s", out)
 	}
 }
 
@@ -787,15 +845,20 @@ func TestPTYSizingFromTerminalAndFlagOverrides(t *testing.T) {
 		_ = ptmx.Close()
 		_ = tty.Close()
 	}()
-	if err := pty.Setsize(ptmx, &pty.Winsize{Cols: 50, Rows: 12}); err != nil {
+	if err := pty.Setsize(ptmx, &pty.Winsize{Cols: 5, Rows: 12}); err != nil {
 		t.Fatal(err)
 	}
 	var outBuf, errBuf bytes.Buffer
-	if code := cli.Run([]string{"--", "sh", "-c", `printf "sized"`}, tty, &outBuf, &errBuf); code != 0 {
+	// Emulating at the controlling terminal's 5-column width wraps "12345678" into 2 rows ("12345" and "678"),
+	// and auto-fits the rendered Screen grid to 5x2 (45x36 px).
+	if code := cli.Run([]string{"--", "sh", "-c", `printf "12345678"`}, tty, &outBuf, &errBuf); code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr: %q)", code, errBuf.String())
 	}
-	if !strings.Contains(outBuf.String(), `width="450" height="216"`) {
-		t.Fatalf("expected 50x12 terminal size (450x216), got:\n%s", outBuf.String())
+	if got := svgTexts(t, outBuf.String()); !slices.Equal(got, []string{"12345", "678"}) {
+		t.Fatalf("wrapped texts = %q, want [12345 678]", got)
+	}
+	if !strings.Contains(outBuf.String(), `width="45" height="36"`) {
+		t.Fatalf("expected 5x2 wrapped auto-fit size (45x36), got:\n%s", outBuf.String())
 	}
 
 	out, stderr, code := run(t, "", "--cols", "4", "--rows", "2", "--", "sh", "-c", `printf "111122223333"`)
@@ -1309,5 +1372,135 @@ func TestShadowAndChromeCombinedSVGAndPNG(t *testing.T) {
 	pngAll, _ := runPNG(t, "\n  hi  \n", "--cols", "8", "--rows", "4", "--trim", "--padding", "8", "--chrome", "--shadow")
 	if got := pngAll.Bounds().Size(); got != image.Pt(74, 106) {
 		t.Fatalf("combined PNG size = %v, want (74, 106)", got)
+	}
+}
+
+func TestChromeWindowTitleSVGAndPNG(t *testing.T) {
+	// Non-empty --title automatically enables Chrome without requiring --chrome.
+	// 30 cols = 270 px wide. Safe zone = 270 - 144 = 126 px (14 cells).
+	// Title "git status" is 10 cols (90 px), centered at x = (270 - 90)/2 = 90, y = 21.
+	svgOut, stderr, code := run(t, "hello\n", "--cols", "30", "--title", "git status")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %q)", code, stderr)
+	}
+	if !strings.Contains(svgOut, `width="270" height="50"`) {
+		t.Fatalf("expected --title to auto-enable Chrome (height 50), got:\n%s", svgOut)
+	}
+	if got := svgTexts(t, svgOut); !slices.Equal(got, []string{"git status", "hello"}) {
+		t.Fatalf("texts = %q, want [\"git status\" \"hello\"]", got)
+	}
+	if !strings.Contains(svgOut, `<text x="90" y="21" fill="#c5c8c6" textLength="90" lengthAdjust="spacing">git status</text>`) {
+		t.Fatalf("missing centered Chrome title text element:\n%s", svgOut)
+	}
+
+	// Empty --title "" without --chrome keeps Chrome disabled.
+	emptyTitleSVG, stderr, code := run(t, "hello\n", "--title", "")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %q)", code, stderr)
+	}
+	if !strings.Contains(emptyTitleSVG, `width="45" height="18"`) {
+		t.Fatalf("expected empty --title without --chrome to keep Chrome off (45x18), got:\n%s", emptyTitleSVG)
+	}
+
+	// Built-in Themes use chrome.foreground for the title in SVG and PNG.
+	themeFgCases := []struct {
+		name   string
+		wantFg string
+		wantC  color.NRGBA
+	}{
+		{name: "dark", wantFg: "#c5c8c6", wantC: color.NRGBA{0xc5, 0xc8, 0xc6, 0xff}},
+		{name: "light", wantFg: "#4d4d4c", wantC: color.NRGBA{0x4d, 0x4d, 0x4c, 0xff}},
+		{name: "macos", wantFg: "#333333", wantC: color.NRGBA{0x33, 0x33, 0x33, 0xff}},
+		{name: "iterm2", wantFg: "#c7c7c7", wantC: color.NRGBA{0xc7, 0xc7, 0xc7, 0xff}},
+		{name: "gnome", wantFg: "#eeeeec", wantC: color.NRGBA{0xee, 0xee, 0xec, 0xff}},
+		{name: "windows", wantFg: "#cccccc", wantC: color.NRGBA{0xcc, 0xcc, 0xcc, 0xff}},
+	}
+	for _, tc := range themeFgCases {
+		out, stderr, code := run(t, "hello\n", "--cols", "30", "--theme", tc.name, "--title", "M")
+		if code != 0 {
+			t.Fatalf("theme %s: exit code = %d (stderr: %q)", tc.name, code, stderr)
+		}
+		if !strings.Contains(out, `fill="`+tc.wantFg+`" textLength="9" lengthAdjust="spacing">M</text>`) {
+			t.Fatalf("theme %s: expected title fill %s:\n%s", tc.name, tc.wantFg, out)
+		}
+		img, _ := runPNG(t, "hello\n", "--cols", "30", "--theme", tc.name, "--title", "MMM")
+		if got := img.Bounds().Size(); got != image.Pt(270, 50) {
+			t.Fatalf("theme %s PNG size = %v, want (270, 50)", tc.name, got)
+		}
+		// Sample center of title bar (x in [120..150), y in [8..24)) and verify title foreground pixels are drawn.
+		foundFg := false
+		for y := 8; y < 24; y++ {
+			for x := 120; x < 150; x++ {
+				if color.NRGBAModel.Convert(img.At(x, y)).(color.NRGBA) == tc.wantC {
+					foundFg = true
+					break
+				}
+			}
+		}
+		if !foundFg {
+			t.Fatalf("theme %s PNG: title foreground color %#v not found in center of title bar", tc.name, tc.wantC)
+		}
+	}
+
+	// Narrow Screenshot truncates long title with "…" within the safe zone between Chrome buttons
+	// without widening the Screenshot.
+	// 20 cols = 180 px wide. Safe zone = 180 - 144 = 36 px = 4 cells.
+	// Title "hello world" (11 cols) truncates to "hel…" (4 cols = 36 px), centered at x = (180 - 36)/2 = 72.
+	narrowSVG, stderr, code := run(t, "hi\n", "--cols", "20", "--title", "hello world")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %q)", code, stderr)
+	}
+	if !strings.Contains(narrowSVG, `width="180" height="50"`) {
+		t.Fatalf("expected narrow Screenshot width 180 unchanged, got:\n%s", narrowSVG)
+	}
+	if got := svgTexts(t, narrowSVG); !slices.Equal(got, []string{"hel…", "hi"}) {
+		t.Fatalf("narrow texts = %q, want [\"hel…\" \"hi\"]", got)
+	}
+	if !strings.Contains(narrowSVG, `<text x="72" y="21" fill="#c5c8c6" textLength="36" lengthAdjust="spacing">hel…</text>`) {
+		t.Fatalf("expected truncated title at x=72 textLength=36:\n%s", narrowSVG)
+	}
+
+	// Wide CJK characters are not split when truncating with "…":
+	// Safe zone = 4 cells (20 cols = 180 px). Title "日本語" (6 cols) -> "日…" (3 cols = 27 px) since 2nd wide char wouldn't fit with "…".
+	cjkSVG, stderr, code := run(t, "hi\n", "--cols", "20", "--title", "日本語")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %q)", code, stderr)
+	}
+	if got := svgTexts(t, cjkSVG); !slices.Equal(got, []string{"日…", "hi"}) {
+		t.Fatalf("CJK truncated texts = %q, want [\"日…\" \"hi\"]", got)
+	}
+
+	// Very narrow Screenshot (safe zone < 1 cell, e.g. 10 cols = 90 px -> safeW = 90 - 144 < 9) omits title cleanly.
+	tinySVG, stderr, code := run(t, "hi\n", "--cols", "10", "--title", "hello")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %q)", code, stderr)
+	}
+	if !strings.Contains(tinySVG, `width="90" height="50"`) {
+		t.Fatalf("expected tiny Screenshot 90x50 with Chrome enabled, got:\n%s", tinySVG)
+	}
+	if got := svgTexts(t, tinySVG); !slices.Equal(got, []string{"hi"}) {
+		t.Fatalf("tiny texts = %q, want [\"hi\"] (title omitted)", got)
+	}
+
+	// Custom JSON Theme without chrome.foreground falls back to theme.foreground.
+	customTheme := `{
+		"foreground": "#123456",
+		"background": "#000000",
+		"ansi": [
+			"#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000",
+			"#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000"
+		],
+		"chrome": {"background": "#222222"}
+	}`
+	themePath := filepath.Join(t.TempDir(), "custom.json")
+	if err := os.WriteFile(themePath, []byte(customTheme), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	customOut, stderr, code := run(t, "hi\n", "--cols", "30", "--theme", themePath, "--title", "custom")
+	if code != 0 {
+		t.Fatalf("custom theme exit code = %d (stderr: %q)", code, stderr)
+	}
+	if !strings.Contains(customOut, `fill="#123456" textLength="54" lengthAdjust="spacing">custom</text>`) {
+		t.Fatalf("expected custom theme title to fall back to theme.foreground #123456:\n%s", customOut)
 	}
 }

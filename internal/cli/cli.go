@@ -22,6 +22,9 @@ import (
 	"ssterm/internal/theme"
 )
 
+// Version is the ssterm version string, injected at build time via -ldflags.
+var Version = "dev"
+
 // Run executes ssterm with the given arguments and returns the exit code.
 func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("ssterm", flag.ContinueOnError)
@@ -45,9 +48,12 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	cropSpec := fs.String("crop", "", "crop Screen grid to COL,ROW,WxH")
 	padding := fs.Int("padding", 0, "padding in pixels around the Screen grid")
 	chrome := fs.Bool("chrome", false, "draw the Theme's Chrome")
+	title := fs.String("title", "", "window title drawn in Chrome (implies --chrome)")
 	shadow := fs.Bool("shadow", false, "draw a drop shadow around the Screenshot")
 	shell := fs.Bool("shell", false, "run PTY command through interactive $SHELL -i -c (loads .bashrc/.zshrc)")
 	fs.BoolVar(shell, "s", false, "shorthand for --shell")
+	showVersion := fs.Bool("version", false, "print the ssterm version and exit")
+	fs.BoolVar(showVersion, "v", false, "shorthand for --version")
 	var cmdArgs []string
 	ptyMode := false
 	if idx := slices.Index(args, "--"); idx >= 0 {
@@ -60,6 +66,10 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			return 0
 		}
 		return 2
+	}
+	if *showVersion {
+		fmt.Fprintf(stdout, "ssterm %s\n", Version)
+		return 0
 	}
 
 	var colsSet, rowsSet bool
@@ -151,16 +161,13 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	skipScrollback := ptyMode || rowsSet
-	renderCols, renderRows := w, h
-	if !ptyMode {
-		renderCols, renderRows = usedBounds(em, skipScrollback)
-		if colsSet {
-			renderCols = *cols
-		}
-		if rowsSet {
-			renderRows = *rows
-		}
+	skipScrollback := rowsSet
+	renderCols, renderRows := usedBounds(em, skipScrollback)
+	if colsSet {
+		renderCols = *cols
+	}
+	if rowsSet {
+		renderRows = *rows
 	}
 	if *trim {
 		em = enhance.Trim(em, skipScrollback, renderCols, renderRows)
@@ -179,6 +186,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			Rows:           renderRows,
 			Padding:        *padding,
 			Chrome:         *chrome,
+			Title:          *title,
 			Shadow:         *shadow,
 		})
 	} else {
@@ -189,6 +197,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			Rows:           renderRows,
 			Padding:        *padding,
 			Chrome:         *chrome,
+			Title:          *title,
 			Shadow:         *shadow,
 		})
 	}
