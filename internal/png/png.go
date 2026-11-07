@@ -7,7 +7,12 @@ import (
 	"image/color"
 	"image/draw"
 	stdpng "image/png"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
 
 	"golang.org/x/image/font"
@@ -16,6 +21,7 @@ import (
 	"golang.org/x/image/font/gofont/gomonobolditalic"
 	"golang.org/x/image/font/gofont/gomonoitalic"
 	"golang.org/x/image/font/opentype"
+	"golang.org/x/image/font/sfnt"
 	"golang.org/x/image/math/fixed"
 
 	"ssterm/internal/emulator"
@@ -46,6 +52,11 @@ var (
 	parsedBold  *opentype.Font
 	parsedItal  *opentype.Font
 	parsedBoldI *opentype.Font
+
+	fallbackMu     sync.Mutex
+	fallbackInited bool
+	fallbackPaths  []string
+	fallbackFonts  []*opentype.Font
 )
 
 func initFonts() {
@@ -66,26 +77,134 @@ func initFonts() {
 	})
 }
 
-func newFace(bold, italic bool) font.Face {
+func primaryFont(idx int) *opentype.Font {
 	initFonts()
-	f := parsedReg
-	switch {
-	case bold && italic:
-		f = parsedBoldI
-	case bold:
-		f = parsedBold
-	case italic:
-		f = parsedItal
+	switch idx {
+	case 1:
+		return parsedBold
+	case 2:
+		return parsedItal
+	case 3:
+		return parsedBoldI
+	default:
+		return parsedReg
 	}
-	face, err := opentype.NewFace(f, &opentype.FaceOptions{
+}
+
+func newFaceFromFont(f *opentype.Font) (font.Face, error) {
+	return opentype.NewFace(f, &opentype.FaceOptions{
 		Size:    fontSize,
 		DPI:     72,
 		Hinting: font.HintingFull,
 	})
+}
+
+func newFace(bold, italic bool) font.Face {
+	idx := 0
+	if bold {
+		idx |= 1
+	}
+	if italic {
+		idx |= 2
+	}
+	face, err := newFaceFromFont(primaryFont(idx))
 	if err != nil {
 		panic(err)
 	}
 	return face
+}
+
+func hasGlyph(f *opentype.Font, buf *sfnt.Buffer, r rune) bool {
+	gi, err := f.GlyphIndex(buf, r)
+	return err == nil && gi != 0
+}
+
+func findFallbackFont(buf *sfnt.Buffer, r rune) *opentype.Font {
+	fallbackMu.Lock()
+	defer fallbackMu.Unlock()
+
+	if !fallbackInited {
+		fallbackPaths = discoverSystemFontPaths()
+		fallbackInited = true
+	}
+	for _, f := range fallbackFonts {
+		if hasGlyph(f, buf, r) {
+			return f
+		}
+	}
+	for len(fallbackPaths) > 0 {
+		path := fallbackPaths[0]
+		fallbackPaths = fallbackPaths[1:]
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		f, err := opentype.Parse(data)
+		if err != nil {
+			continue
+		}
+		fallbackFonts = append(fallbackFonts, f)
+		if hasGlyph(f, buf, r) {
+			return f
+		}
+	}
+	return nil
+}
+
+func discoverSystemFontPaths() []string {
+	var dirs []string
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		dirs = append(dirs,
+			filepath.Join(home, ".local", "share", "fonts"),
+			filepath.Join(home, ".fonts"),
+			filepath.Join(home, "Library", "Fonts"),
+		)
+	}
+	dirs = append(dirs,
+		"/usr/local/share/fonts",
+		"/usr/share/fonts",
+		"/Library/Fonts",
+		"/System/Library/Fonts",
+		`C:\Windows\Fonts`,
+	)
+	var paths []string
+	seen := make(map[string]bool)
+	for _, dir := range dirs {
+		_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			ext := strings.ToLower(filepath.Ext(p))
+			if (ext == ".ttf" || ext == ".otf") && !seen[p] {
+				seen[p] = true
+				paths = append(paths, p)
+			}
+			return nil
+		})
+	}
+	slices.SortStableFunc(paths, func(a, b string) int {
+		return fontPriority(a) - fontPriority(b)
+	})
+	return paths
+}
+
+func fontPriority(path string) int {
+	base := strings.ToLower(filepath.Base(path))
+	score := 50
+	switch {
+	case strings.Contains(base, "nerd"):
+		score = 10
+	case strings.Contains(base, "symbol") || strings.Contains(base, "icon"):
+		score = 20
+	case strings.Contains(base, "dejavusansmono") || strings.Contains(base, "notosansmono") || strings.Contains(base, "notomono"):
+		score = 30
+	case strings.Contains(base, "cjk") || strings.Contains(base, "zenhei") || strings.Contains(base, "unifont"):
+		score = 40
+	}
+	if strings.Contains(base, "regular") || strings.Contains(base, "book") {
+		score -= 3
+	}
+	return score
 }
 
 // RenderWithOptions draws the Screen grid using the Theme and Options.
@@ -109,11 +228,16 @@ func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte
 		newFace(false, true),
 		newFace(true, true),
 	}
+	extraFaces := make(map[*opentype.Font]font.Face)
 	defer func() {
 		for _, f := range faces {
 			_ = f.Close()
 		}
+		for _, f := range extraFaces {
+			_ = f.Close()
+		}
 	}()
+	var sfntBuf sfnt.Buffer
 
 	for row := 0; row < lay.TotalRows; row++ {
 		y0 := lay.ContentY + row*cellH
@@ -144,10 +268,29 @@ func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte
 				if c.Attrs&emulator.AttrItalic != 0 {
 					idx |= 2
 				}
+				pFont := primaryFont(idx)
+				face := faces[idx]
+				for _, r := range c.Text {
+					if !hasGlyph(pFont, &sfntBuf, r) {
+						if fb := findFallbackFont(&sfntBuf, r); fb != nil {
+							fbFace, ok := extraFaces[fb]
+							if !ok {
+								if created, err := newFaceFromFont(fb); err == nil {
+									fbFace = created
+									extraFaces[fb] = fbFace
+								}
+							}
+							if fbFace != nil {
+								face = fbFace
+							}
+						}
+					}
+					break
+				}
 				d := &font.Drawer{
 					Dst:  img,
 					Src:  &image.Uniform{C: fg},
-					Face: faces[idx],
+					Face: face,
 					Dot:  fixed.P(x0, baseline),
 				}
 				d.DrawString(c.Text)
