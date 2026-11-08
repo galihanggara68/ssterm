@@ -7,6 +7,7 @@
 <circle cx="76" cy="36" r="6" fill="#27c93f"/>
 <rect x="20" y="52" width="887" height="194" fill="#1d1f21"/>
 <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, &#39;DejaVu Sans Mono&#39;, monospace" font-size="14" fill="#c5c8c6" xml:space="preserve">
+<text x="351" y="41" fill="#c5c8c6" textLength="225" lengthAdjust="spacing">git log --graph --oneline</text>
 <text x="36" y="81" textLength="801" lengthAdjust="spacing">* <tspan fill="#f0c674">2bd06fd (</tspan><tspan fill="#70c0b1" font-weight="bold">HEAD</tspan><tspan fill="#f0c674"> -&gt; </tspan><tspan fill="#b9ca4a" font-weight="bold">main</tspan><tspan fill="#f0c674">)</tspan> docs(readme): add dogfood 3D logo and feature sample Screenshots</text>
 <text x="36" y="99" textLength="783" lengthAdjust="spacing">* <tspan fill="#f0c674">051d86d</tspan> feat(cli,ci,docs): add --shell PTY mode, README, Makefile, and GitHub Actions</text>
 <text x="36" y="117" textLength="792" lengthAdjust="spacing">* <tspan fill="#f0c674">42826ff</tspan> refactor(enhance): unify Screenshot layout, Chrome geometry, and CellAt lookup</text>

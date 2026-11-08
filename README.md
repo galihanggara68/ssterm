@@ -12,10 +12,10 @@ It runs a real VT terminal emulator ([`charmbracelet/x/vt`](https://github.com/c
 
 ## Sample Screenshots
 
-### 1. Git Graph & Colored Output (`--theme dark --chrome --shadow --padding 16`)
+### 1. Git Graph & Colored Output (`--theme dark --title "git log --graph --oneline" --shadow --padding 16`)
 ```bash
 git -P log --graph --oneline --decorate -n 8 --color=always \
-  | ssterm --theme dark --chrome --shadow --padding 16 -o assets/sample-git-log.svg
+  | ssterm --theme dark --title "git log --graph --oneline" --shadow --padding 16 -o assets/sample-git-log.svg
 ```
 ![Git log sample](assets/sample-git-log.svg)
 
@@ -49,14 +49,14 @@ git diff --color=always | ssterm --theme windows --chrome --shadow --padding 16 
   - **OSC 8 Hyperlinks:** Clickable `<a href="...">` links in SVG Screenshots.
 - **Two Sources**
   - **Piped Source (`cmd | ssterm`):** Reads piped `stdin`, automatically fits the **Screen grid** to the content (unless `--cols` / `--rows` are set), and includes **Scrollback** by default.
-  - **PTY Source (`ssterm -- cmd [args...]`):** Runs the command inside a real pseudo-terminal (`isatty` is true, so tools emit color and TUI layouts automatically) and renders the final **Screen grid** on exit.
+  - **PTY Source (`ssterm -- cmd [args...]`):** Runs the command inside a real pseudo-terminal (`isatty` is true, so tools emit color and TUI layouts automatically), emulates at the controlling terminal's dimensions (or `--cols` / `--rows`), includes **Scrollback**, and auto-fits the rendered **Screen grid** to the non-blank cells on exit.
 - **Dual Output Formats**
   - **SVG (default):** Written to `stdout` or `-o file.svg`. Uses run-length encoded `<text>` and `<tspan>` spans so text remains selectable and searchable.
-  - **PNG (`-o file.png`):** Pure-Go rasterizer using embedded Go Mono (`gomono`) fonts—no `cgo` or system font dependencies required.
-- **Pluggable Themes**
-  - 6 built-in Themes (`dark`, `light`, `macos`, `iterm2`, `gnome`, `windows`) plus custom JSON Theme files via `--theme path/to/theme.json`.
+  - **PNG (`-o file.png`):** Pure-Go rasterizer using embedded Go Mono (`gomono`) fonts with automatic Nerd Font / system monospace glyph fallback—no `cgo` required.
+- **Pluggable Themes & User Defaults**
+  - 6 built-in Themes (`dark`, `light`, `macos`, `iterm2`, `gnome`, `windows`), custom JSON Theme files via `--theme path/to/theme.json`, and persistent user defaults in `~/.config/ssterm/config.json`.
 - **Opt-In Cosmetic Enhancements**
-  - **Faithful** by default; opt into `--trim`, `--crop`, `--padding`, `--chrome`, and `--shadow` when preparing documentation or social Screenshots.
+  - **Faithful** by default; opt into `--trim`, `--crop`, `--padding`, `--chrome`, `--title`, and `--shadow` when preparing documentation or social Screenshots.
 
 ---
 
@@ -73,7 +73,7 @@ curl -fsSL https://raw.githubusercontent.com/galihanggara68/ssterm/main/install.
 To install a specific version or into a custom directory (e.g. `~/.local/bin`):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/galihanggara68/ssterm/main/install.sh | VERSION=v0.1.0-beta.1 INSTALL_DIR=~/.local/bin sh
+curl -fsSL https://raw.githubusercontent.com/galihanggara68/ssterm/main/install.sh | VERSION=v0.1.0 INSTALL_DIR=~/.local/bin sh
 ```
 
 ### Build from source
@@ -139,14 +139,14 @@ ssterm -s -o status.svg -- my_shell_alias
 
 ### 4. Polished Documentation Screenshot
 
-Combine a **Theme** with opt-in **Enhancements** (`--trim`, `--padding`, `--chrome`, `--shadow`):
+Combine a **Theme** with opt-in **Enhancements** (`--trim`, `--padding`, `--title` / `--chrome`, `--shadow`):
 
 ```bash
 ssterm \
   --theme macos \
   --trim \
   --padding 16 \
-  --chrome \
+  --title "git status -sb" \
   --shadow \
   -o showcase.svg \
   -- git status -sb
@@ -168,25 +168,27 @@ Usage:
 | :--- | :--- | :--- | :--- |
 | `-o <path>` | `string` | `""` (`stdout`) | Write the Screenshot to `<path>` instead of `stdout`. Extension selects format: `.svg` or `.png`. |
 | `--theme <name\|path>` | `string` | `"dark"` | Built-in Theme name (`dark`, `light`, `macos`, `iterm2`, `gnome`, `windows`) or path to a `.json` Theme file. |
-| `--cols <n>` | `int` | fit content / terminal width | Screen grid width in columns (`> 0`). Wraps lines exceeding `<n>` columns. |
-| `--rows <n>` | `int` | fit content / terminal height | Screen grid height in rows (`> 0`). When explicitly set in piped mode, renders only the visible Screen grid without Scrollback. |
+| `--cols <n>` | `int` | fit content | Screen grid width in columns (`> 0`). Wraps lines exceeding `<n>` columns and locks the rendered width. |
+| `--rows <n>` | `int` | fit content | Screen grid height in rows (`> 0`). When explicitly set, renders only the visible Screen grid without Scrollback. |
 | `--font <stack>` | `string` | `ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace` | CSS `font-family` stack emitted on the root `<g>` element in SVG Screenshots. |
 | `--trim` | `bool` | `false` | Strip leading and trailing blank rows and columns around the Screen grid. |
 | `--crop <spec>` | `string` | `""` | Crop the Screen grid to a 0-based cell rectangle (`COL,ROW,WxH`, `WxH+COL+ROW`, or `COL,ROW,W,H`). |
 | `--padding <px>` | `int` | `0` | Add `<px>` pixels (`>= 0`) of Theme background around all four sides of the Screen grid. |
 | `--chrome` | `bool` | `false` | Draw the Theme's window **Chrome** (title bar and control buttons) above the Screen grid. |
+| `--title <text>` | `string` | `""` | Draw `<text>` centered in the Chrome title bar (automatically enables `--chrome` when non-empty). |
 | `--shadow` | `bool` | `false` | Draw a soft drop shadow around the Screenshot window. |
 | `-s`, `--shell` | `bool` | `false` | Run the PTY command (`--`) through `$SHELL -i -c` so aliases and functions from `.bashrc` / `.zshrc` are loaded. |
+| `-v`, `--version` | — | — | Print `ssterm <version>` to `stdout` and exit `0`. |
 | `-h`, `--help` | — | — | Print usage and flags to `stderr` and exit `0`. |
 
 ---
 
 ## Sizing & Scrollback Behavior
 
-| Mode | Default `--cols` / `--rows` | Scrollback Behavior |
-| :--- | :--- | :--- |
-| **Piped Source** (`cmd \| ssterm`) | Fits the tightest bounding box of non-blank cells (`>= 1x1`). | **Included** above the active Screen grid unless `--rows` is explicitly set or the program exits on the alternate screen (`\x1b[?1049h`). |
-| **PTY Source** (`ssterm -- cmd`) | Inherits controlling terminal size (`stdin`/`stdout`/`stderr`), falling back to `80x24`. | **Excluded**—renders the visible Screen grid at the moment the child command exits. |
+| Mode | Emulation Size | Rendered Size (`--cols` / `--rows` unset) | Scrollback Behavior |
+| :--- | :--- | :--- | :--- |
+| **Piped Source** (`cmd \| ssterm`) | Upper-bound fit estimate (or `--cols` / `--rows`). | Auto-fits the tightest bounding box of non-blank cells (`>= 1x1`). | **Included** above the active Screen grid unless `--rows` is explicitly set or the program exits on the alternate screen (`\x1b[?1049h`). |
+| **PTY Source** (`ssterm -- cmd`) | Inherits controlling terminal size (`stdin`/`stdout`/`stderr`), falling back to `80x24` (or `--cols` / `--rows`). | Auto-fits the tightest bounding box of non-blank cells (`>= 1x1`). | **Included** above the active Screen grid unless `--rows` is explicitly set or the program exits on the alternate screen (`\x1b[?1049h`). |
 
 ---
 
@@ -242,12 +244,31 @@ ssterm --theme ./dracula.json --chrome -o out.svg < session.ansi
 - **`ansi`** *(required)*: Array of exactly 16 `#RRGGBB` hex color strings (indices `0–7` standard, `8–15` bright).
 - **`name`** *(optional)*: String; defaults to the file basename without extension.
 - **`bold_as_bright`** *(optional)*: Boolean (`false` by default); when `true`, bold text using standard ANSI colors `0–7` uses bright colors `8–15`.
-- **`chrome`** *(optional)*: Object customizing window **Chrome** when `--chrome` is passed:
+- **`chrome`** *(optional)*: Object customizing window **Chrome** when `--chrome` or `--title` is passed:
   - `layout`: `"macos"`, `"gnome"`, or `"windows"` (defaults to `"macos"`).
   - `background`: `#RRGGBB` title bar fill color.
-  - `foreground`: `#RRGGBB` title bar foreground color.
+  - `foreground`: `#RRGGBB` title bar foreground color (defaults to the Theme's `foreground`).
   - `buttons`: Array of 3 `#RRGGBB` button colors.
 - Unknown fields, `null` values, or malformed hex strings fail immediately with exit code `2` and a descriptive error on `stderr`.
+
+### User Configuration File (`config.json`)
+
+To avoid repeating your preferred flags on every invocation, create `$XDG_CONFIG_HOME/ssterm/config.json` (or `~/.config/ssterm/config.json` on Linux/macOS, `%AppData%\ssterm\config.json` on Windows), or point `$SSTERM_CONFIG` to a custom file path:
+
+```json
+{
+  "theme": "macos",
+  "font": "JetBrains Mono, ui-monospace, monospace",
+  "padding": 16,
+  "trim": true,
+  "chrome": true,
+  "shadow": true,
+  "shell": false
+}
+```
+
+- **Precedence:** Any flag explicitly passed on the command line (including `--chrome=false`, `--shadow=false`, `--trim=false`, or `--padding 0`) overrides `config.json`.
+- **Validation:** Missing default config files are silently ignored. If `$SSTERM_CONFIG` points to a missing file, or if `config.json` contains unknown keys, `null` values, or invalid types/values, `ssterm` prints an error to `stderr` and exits `2`.
 
 ---
 
@@ -264,7 +285,7 @@ Enhancements compose in a fixed, predictable pipeline:
    - `COL,ROW,W,H` (e.g. `--crop 2,1,40,10`)
    - Wide 2-column glyphs straddling a crop edge are cleanly replaced with a 1-column space preserving the cell's styling.
 3. **`--padding <px>`:** Expands the Screen grid background by `<px>` pixels on all four sides (`width + 2*px`, `height + 2*px`) and offsets cell rendering by `(px, px)`.
-4. **`--chrome`:** Adds a `32px`-tall window title bar above the (optionally padded) Screen grid body using the active Theme's Chrome layout (`macos`, `gnome`, or `windows`).
+4. **`--chrome` & `--title <text>`:** Adds a `32px`-tall window title bar above the (optionally padded) Screen grid body using the active Theme's Chrome layout (`macos`, `gnome`, or `windows`). Passing a non-empty `--title` automatically enables Chrome, horizontally centers the title in `chrome.foreground`, and truncates long titles with `…` inside the safe zone between the window buttons so narrow Screenshots never widen.
 5. **`--shadow`:** Surrounds the window (Chrome + Screen grid body) with a `20px` outer margin and renders a translucent drop shadow (`<feDropShadow>` in SVG; alpha-blended falloff in PNG).
 
 ---
@@ -273,9 +294,9 @@ Enhancements compose in a fixed, predictable pipeline:
 
 | Exit Code | Meaning |
 | :--- | :--- |
-| `0` | Screenshot rendered and written, or `--help` displayed. |
+| `0` | Screenshot rendered and written, or `--help` / `--version` displayed. |
 | `1` | Runtime error (e.g., empty piped `stdin`, file write error, or unsupported PTY mode on Windows). |
-| `2` | CLI usage or validation error (unknown flag, invalid `--cols`/`--rows`/`--padding`/`--crop`, unknown `--theme`, invalid JSON Theme file, unsupported `-o` extension, or missing command after `--`). |
+| `2` | CLI usage or validation error (unknown flag, invalid `--cols`/`--rows`/`--padding`/`--crop`, unknown `--theme`, invalid JSON Theme or `config.json` file, unsupported `-o` extension, or missing command after `--`). |
 | `<child code>` | In PTY mode (`ssterm -- cmd`), `ssterm` writes the Screenshot of the command's output and exits with the child command's exit code (or exits `1` without writing a Screenshot if the command fails to start). |
 
 ### Platform Support
