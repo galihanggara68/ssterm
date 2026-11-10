@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/xml"
 	"flag"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -631,6 +632,127 @@ func TestBuiltinThemes(t *testing.T) {
 	}
 }
 
+func TestCommunityThemes(t *testing.T) {
+	communityThemes := []struct {
+		name       string
+		bgHex      string
+		fgHex      string
+		ansiRedHex string // ANSI 1
+		chromeBg   string
+		bgNRGBA    color.NRGBA
+	}{
+		{
+			name:       "dracula",
+			bgHex:      "#282a36",
+			fgHex:      "#f8f8f2",
+			ansiRedHex: "#ff5555",
+			chromeBg:   "#21222c",
+			bgNRGBA:    color.NRGBA{R: 0x28, G: 0x2a, B: 0x36, A: 0xff},
+		},
+		{
+			name:       "catppuccin-mocha",
+			bgHex:      "#1e1e2e",
+			fgHex:      "#cdd6f4",
+			ansiRedHex: "#f38ba8",
+			chromeBg:   "#181825",
+			bgNRGBA:    color.NRGBA{R: 0x1e, G: 0x1e, B: 0x2e, A: 0xff},
+		},
+		{
+			name:       "catppuccin-latte",
+			bgHex:      "#eff1f5",
+			fgHex:      "#4c4f69",
+			ansiRedHex: "#d20f39",
+			chromeBg:   "#e6e9ef",
+			bgNRGBA:    color.NRGBA{R: 0xef, G: 0xf1, B: 0xf5, A: 0xff},
+		},
+		{
+			name:       "tokyo-night",
+			bgHex:      "#1a1b26",
+			fgHex:      "#c0caf5",
+			ansiRedHex: "#f7768e",
+			chromeBg:   "#16161e",
+			bgNRGBA:    color.NRGBA{R: 0x1a, G: 0x1b, B: 0x26, A: 0xff},
+		},
+		{
+			name:       "nord",
+			bgHex:      "#2e3440",
+			fgHex:      "#d8dee9",
+			ansiRedHex: "#bf616a",
+			chromeBg:   "#242933",
+			bgNRGBA:    color.NRGBA{R: 0x2e, G: 0x34, B: 0x40, A: 0xff},
+		},
+		{
+			name:       "gruvbox-dark",
+			bgHex:      "#282828",
+			fgHex:      "#ebdbb2",
+			ansiRedHex: "#cc241d",
+			chromeBg:   "#1d2021",
+			bgNRGBA:    color.NRGBA{R: 0x28, G: 0x28, B: 0x28, A: 0xff},
+		},
+	}
+
+	for _, tt := range communityThemes {
+		t.Run(tt.name+"/svg", func(t *testing.T) {
+			out, stderr, code := run(t, "\x1b[1;31mhello\x1b[0m\n", "--theme", tt.name, "--chrome")
+			if code != 0 {
+				t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
+			}
+			if !strings.Contains(out, fmt.Sprintf(`fill="%s"`, tt.bgHex)) {
+				t.Errorf("SVG missing background %s:\n%s", tt.bgHex, out)
+			}
+			if !strings.Contains(out, fmt.Sprintf(`fill="%s"`, tt.ansiRedHex)) {
+				t.Errorf("SVG missing bold ANSI 1 color %s (bold_as_bright should be false):\n%s", tt.ansiRedHex, out)
+			}
+			if !strings.Contains(out, fmt.Sprintf(`fill="%s"`, tt.chromeBg)) {
+				t.Errorf("SVG missing chrome background %s:\n%s", tt.chromeBg, out)
+			}
+		})
+
+		t.Run(tt.name+"/png", func(t *testing.T) {
+			img, _ := runPNG(t, "hello\n", "--theme", tt.name)
+			gotBg := color.NRGBAModel.Convert(img.At(0, 0)).(color.NRGBA)
+			if gotBg != tt.bgNRGBA {
+				t.Fatalf("PNG (0,0) bg = %#v, want %#v", gotBg, tt.bgNRGBA)
+			}
+		})
+	}
+}
+
+func TestThemeDiscoveryHelpAndUnknown(t *testing.T) {
+	allThemes := []string{
+		"dark", "light", "macos", "iterm2", "gnome", "windows",
+		"dracula", "catppuccin-mocha", "catppuccin-latte", "tokyo-night", "nord", "gruvbox-dark",
+	}
+
+	t.Run("help lists all themes", func(t *testing.T) {
+		_, stderr, code := run(t, "", "--help")
+		if code != 0 {
+			t.Fatalf("exit code = %d, want 0", code)
+		}
+		for _, name := range allThemes {
+			if !strings.Contains(stderr, name) {
+				t.Errorf("help missing theme %q:\n%s", name, stderr)
+			}
+		}
+	})
+
+	t.Run("unknown theme error and exit code 2", func(t *testing.T) {
+		_, stderr, code := run(t, "x\n", "--theme", "invalid-theme")
+		if code != 2 {
+			t.Fatalf("exit code = %d, want 2", code)
+		}
+		wantPrefix := `ssterm: unknown theme "invalid-theme", valid themes: `
+		if !strings.Contains(stderr, wantPrefix) {
+			t.Errorf("stderr missing %q:\n%s", wantPrefix, stderr)
+		}
+		for _, name := range allThemes {
+			if !strings.Contains(stderr, name) {
+				t.Errorf("unknown theme error missing %q:\n%s", name, stderr)
+			}
+		}
+	})
+}
+
 func TestThemeJSONFileAndValidation(t *testing.T) {
 	validJSON := `{
   "name": "house",
@@ -1193,6 +1315,48 @@ func TestChromeSVGAllBuiltinThemes(t *testing.T) {
 			wantShape: `fill="#e81123"`,
 			wantLeft:  false,
 		},
+		{
+			name:      "dracula",
+			chromeBg:  "#21222c",
+			buttons:   [3]string{"#ff5f56", "#ffbd2e", "#27c93f"},
+			wantShape: `<circle cx="16" cy="16" r="6" fill="#ff5f56"/>`,
+			wantLeft:  true,
+		},
+		{
+			name:      "catppuccin-mocha",
+			chromeBg:  "#181825",
+			buttons:   [3]string{"#ff5f56", "#ffbd2e", "#27c93f"},
+			wantShape: `<circle cx="16" cy="16" r="6" fill="#ff5f56"/>`,
+			wantLeft:  true,
+		},
+		{
+			name:      "catppuccin-latte",
+			chromeBg:  "#e6e9ef",
+			buttons:   [3]string{"#ff5f56", "#ffbd2e", "#27c93f"},
+			wantShape: `<circle cx="16" cy="16" r="6" fill="#ff5f56"/>`,
+			wantLeft:  true,
+		},
+		{
+			name:      "tokyo-night",
+			chromeBg:  "#16161e",
+			buttons:   [3]string{"#ff5f56", "#ffbd2e", "#27c93f"},
+			wantShape: `<circle cx="16" cy="16" r="6" fill="#ff5f56"/>`,
+			wantLeft:  true,
+		},
+		{
+			name:      "nord",
+			chromeBg:  "#242933",
+			buttons:   [3]string{"#ff5f56", "#ffbd2e", "#27c93f"},
+			wantShape: `<circle cx="16" cy="16" r="6" fill="#ff5f56"/>`,
+			wantLeft:  true,
+		},
+		{
+			name:      "gruvbox-dark",
+			chromeBg:  "#1d2021",
+			buttons:   [3]string{"#ff5f56", "#ffbd2e", "#27c93f"},
+			wantShape: `<circle cx="16" cy="16" r="6" fill="#ff5f56"/>`,
+			wantLeft:  true,
+		},
 	}
 
 	for _, tc := range themes {
@@ -1275,6 +1439,48 @@ func TestChromePNGAllBuiltinThemes(t *testing.T) {
 			chromeBg: color.NRGBA{0x1f, 0x1f, 0x1f, 0xff},
 			buttons:  [3]color.NRGBA{{0xcc, 0xcc, 0xcc, 0xff}, {0xcc, 0xcc, 0xcc, 0xff}, {0xe8, 0x11, 0x23, 0xff}},
 			left:     false,
+		},
+		{
+			name:     "dracula",
+			termBg:   color.NRGBA{0x28, 0x2a, 0x36, 0xff},
+			chromeBg: color.NRGBA{0x21, 0x22, 0x2c, 0xff},
+			buttons:  [3]color.NRGBA{{0xff, 0x5f, 0x56, 0xff}, {0xff, 0xbd, 0x2e, 0xff}, {0x27, 0xc9, 0x3f, 0xff}},
+			left:     true,
+		},
+		{
+			name:     "catppuccin-mocha",
+			termBg:   color.NRGBA{0x1e, 0x1e, 0x2e, 0xff},
+			chromeBg: color.NRGBA{0x18, 0x18, 0x25, 0xff},
+			buttons:  [3]color.NRGBA{{0xff, 0x5f, 0x56, 0xff}, {0xff, 0xbd, 0x2e, 0xff}, {0x27, 0xc9, 0x3f, 0xff}},
+			left:     true,
+		},
+		{
+			name:     "catppuccin-latte",
+			termBg:   color.NRGBA{0xef, 0xf1, 0xf5, 0xff},
+			chromeBg: color.NRGBA{0xe6, 0xe9, 0xef, 0xff},
+			buttons:  [3]color.NRGBA{{0xff, 0x5f, 0x56, 0xff}, {0xff, 0xbd, 0x2e, 0xff}, {0x27, 0xc9, 0x3f, 0xff}},
+			left:     true,
+		},
+		{
+			name:     "tokyo-night",
+			termBg:   color.NRGBA{0x1a, 0x1b, 0x26, 0xff},
+			chromeBg: color.NRGBA{0x16, 0x16, 0x1e, 0xff},
+			buttons:  [3]color.NRGBA{{0xff, 0x5f, 0x56, 0xff}, {0xff, 0xbd, 0x2e, 0xff}, {0x27, 0xc9, 0x3f, 0xff}},
+			left:     true,
+		},
+		{
+			name:     "nord",
+			termBg:   color.NRGBA{0x2e, 0x34, 0x40, 0xff},
+			chromeBg: color.NRGBA{0x24, 0x29, 0x33, 0xff},
+			buttons:  [3]color.NRGBA{{0xff, 0x5f, 0x56, 0xff}, {0xff, 0xbd, 0x2e, 0xff}, {0x27, 0xc9, 0x3f, 0xff}},
+			left:     true,
+		},
+		{
+			name:     "gruvbox-dark",
+			termBg:   color.NRGBA{0x28, 0x28, 0x28, 0xff},
+			chromeBg: color.NRGBA{0x1d, 0x20, 0x21, 0xff},
+			buttons:  [3]color.NRGBA{{0xff, 0x5f, 0x56, 0xff}, {0xff, 0xbd, 0x2e, 0xff}, {0x27, 0xc9, 0x3f, 0xff}},
+			left:     true,
 		},
 	}
 

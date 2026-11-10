@@ -41,7 +41,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		})
 	}
 	output := fs.String("o", "", "write the Screenshot to this file instead of stdout")
-	themeName := fs.String("theme", theme.Default().Name, "Theme name")
+	themeName := fs.String("theme", theme.Default().Name, "Theme name ("+strings.Join(theme.Names(), ", ")+")")
 	cols := fs.Int("cols", 0, "screen width in columns (default: fit content)")
 	rows := fs.Int("rows", 0, "screen height in rows (default: fit content)")
 	font := fs.String("font", "", "SVG font-family stack")
