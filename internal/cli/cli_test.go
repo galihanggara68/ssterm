@@ -1959,6 +1959,14 @@ func TestRadiusSVG(t *testing.T) {
 	if !strings.Contains(outChrome, `<clipPath id="window-clip"><rect x="0" y="0" width="45" height="50" rx="8"/></clipPath>`) {
 		t.Errorf("SVG chrome+radius missing clipPath with height=50 rx=8:\n%s", outChrome)
 	}
+	clipStart := strings.Index(outChrome, `<g clip-path="url(#window-clip)">`)
+	textStart := strings.Index(outChrome, `<text x="0" y="45"`)
+	if clipStart == -1 || textStart == -1 || textStart < clipStart {
+		t.Errorf("SVG text should be inside window clip-path group:\n%s", outChrome)
+	}
+	if !strings.HasSuffix(strings.TrimSpace(outChrome), "</g>\n</g>\n</svg>") {
+		t.Errorf("SVG should close text group and clip-path group at end:\n%s", outChrome)
+	}
 }
 
 func TestRadiusPNG(t *testing.T) {

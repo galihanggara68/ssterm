@@ -74,9 +74,6 @@ func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte
 			writeChrome(&b, chromeSpec)
 		}
 		fmt.Fprintf(&b, `<rect x="%d" y="%d" width="%d" height="%d" fill="%s"/>`+"\n", lay.BodyX, lay.BodyY, lay.BodyW, lay.BodyH, th.Background)
-		if lay.Radius > 0 {
-			b.WriteString("</g>\n")
-		}
 	}
 	fmt.Fprintf(&b, `<g font-family="%s" font-size="%d" fill="%s" xml:space="preserve">`+"\n", escape(font), fontSize, th.Foreground)
 	if chromeSpec.Title != "" {
@@ -121,7 +118,11 @@ func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte
 			b.WriteString("</text>\n")
 		}
 	}
-	b.WriteString("</g>\n</svg>\n")
+	b.WriteString("</g>\n")
+	if lay.Radius > 0 {
+		b.WriteString("</g>\n")
+	}
+	b.WriteString("</svg>\n")
 	return b.Bytes()
 }
 

@@ -229,11 +229,6 @@ func Lookup(name string) (Theme, bool) {
 	return Theme{}, false
 }
 
-// Get returns the Theme with the given name, or false if not found.
-func Get(name string) (Theme, bool) {
-	return Lookup(name)
-}
-
 // Names lists the names of all available Themes.
 func Names() []string {
 	out := make([]string, len(builtins))
