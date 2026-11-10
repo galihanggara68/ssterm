@@ -8,6 +8,7 @@ import (
 	"image/draw"
 	stdpng "image/png"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -43,6 +44,7 @@ type Options struct {
 	Cols, Rows int
 	// Padding adds pixels of Theme background around all four sides of the Screen grid.
 	Padding int
+	Radius  int
 	Chrome  bool
 	Title   string
 	Shadow  bool
@@ -226,20 +228,25 @@ func fontPriority(path string) int {
 // RenderWithOptions draws the Screen grid using the Theme and Options.
 func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte {
 	chromeEnabled := opts.Chrome || opts.Title != ""
-	lay := enhance.ComputeLayout(e, opts.SkipScrollback, opts.Cols, opts.Rows, opts.Padding, chromeEnabled, opts.Shadow)
+	lay := enhance.ComputeLayout(e, opts.SkipScrollback, opts.Cols, opts.Rows, opts.Padding, opts.Radius, chromeEnabled, opts.Shadow)
 
 	img := image.NewRGBA(image.Rect(0, 0, lay.TotalW, lay.TotalH))
 	defBg := parseHex(th.Background)
 	defFg := parseHex(th.Foreground)
+
+	var winTarget *image.RGBA
 	if opts.Shadow {
-		drawShadow(img, lay.WinX, lay.WinY, lay.WinW, lay.WinH)
+		winTarget = image.NewRGBA(image.Rect(lay.WinX, lay.WinY, lay.WinX+lay.WinW, lay.WinY+lay.WinH))
+	} else {
+		winTarget = img
 	}
+
 	var chromeSpec enhance.ChromeSpec
 	if chromeEnabled {
 		chromeSpec = enhance.ComputeChrome(th, lay.WinX, lay.WinY, lay.WinW, opts.Title)
-		drawChrome(img, chromeSpec)
+		drawChrome(winTarget, chromeSpec)
 	}
-	draw.Draw(img, image.Rect(lay.BodyX, lay.BodyY, lay.BodyX+lay.BodyW, lay.BodyY+lay.BodyH), &image.Uniform{C: defBg}, image.Point{}, draw.Src)
+	draw.Draw(winTarget, image.Rect(lay.BodyX, lay.BodyY, lay.BodyX+lay.BodyW, lay.BodyY+lay.BodyH), &image.Uniform{C: defBg}, image.Point{}, draw.Src)
 
 	faces := [4]font.Face{
 		newFace(false, false),
@@ -285,7 +292,7 @@ func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte
 			rw := max(ansi.StringWidth(s), 1)
 			if r != ' ' {
 				d := &font.Drawer{
-					Dst:  img,
+					Dst:  winTarget,
 					Src:  &image.Uniform{C: titleFg},
 					Face: faceForRune(0, r),
 					Dot:  fixed.P(tx, chromeSpec.TitleY),
@@ -306,7 +313,7 @@ func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte
 			_, bg := resolveColors(th, c, defFg, defBg)
 			if bg != defBg {
 				x0 := lay.ContentX + col*cellW
-				draw.Draw(img, image.Rect(x0, y0, x0+cw*cellW, y0+cellH), &image.Uniform{C: bg}, image.Point{}, draw.Src)
+				draw.Draw(winTarget, image.Rect(x0, y0, x0+cw*cellW, y0+cellH), &image.Uniform{C: bg}, image.Point{}, draw.Src)
 			}
 			col += cw
 		}
@@ -331,7 +338,7 @@ func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte
 					break
 				}
 				d := &font.Drawer{
-					Dst:  img,
+					Dst:  winTarget,
 					Src:  &image.Uniform{C: fg},
 					Face: face,
 					Dot:  fixed.P(x0, baseline),
@@ -341,15 +348,23 @@ func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte
 
 			if c.Attrs&emulator.AttrUnderline != 0 {
 				uy := baseline + 2
-				draw.Draw(img, image.Rect(x0, uy, x0+cw*cellW, uy+1), &image.Uniform{C: fg}, image.Point{}, draw.Src)
+				draw.Draw(winTarget, image.Rect(x0, uy, x0+cw*cellW, uy+1), &image.Uniform{C: fg}, image.Point{}, draw.Src)
 			}
 			if c.Attrs&emulator.AttrStrikethrough != 0 {
 				sy := y0 + cellH/2
-				draw.Draw(img, image.Rect(x0, sy, x0+cw*cellW, sy+1), &image.Uniform{C: fg}, image.Point{}, draw.Src)
+				draw.Draw(winTarget, image.Rect(x0, sy, x0+cw*cellW, sy+1), &image.Uniform{C: fg}, image.Point{}, draw.Src)
 			}
 
 			col += cw
 		}
+	}
+
+	if lay.Radius > 0 {
+		applyCornerMask(winTarget, lay.WinX, lay.WinY, lay.WinW, lay.WinH, lay.Radius)
+	}
+	if opts.Shadow {
+		drawShadow(img, lay.WinX, lay.WinY, lay.WinW, lay.WinH, lay.Radius)
+		draw.Draw(img, winTarget.Bounds(), winTarget, winTarget.Bounds().Min, draw.Over)
 	}
 
 	var buf bytes.Buffer
@@ -357,23 +372,89 @@ func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte
 	return buf.Bytes()
 }
 
-func drawShadow(img *image.RGBA, winX, winY, winW, winH int) {
-	const radius = 12
-	const r2 = radius * radius
+func drawShadow(img *image.RGBA, winX, winY, winW, winH, cornerR int) {
+	const blurRadius = 12
+	const r2 = blurRadius * blurRadius
 	sx0, sy0 := winX, winY+4
 	sx1, sy1 := winX+winW, winY+winH+4
 	b := img.Bounds()
-	yMin := max(b.Min.Y, sy0-radius)
-	yMax := min(b.Max.Y, sy1+radius)
-	xMin := max(b.Min.X, sx0-radius)
-	xMax := min(b.Max.X, sx1+radius)
+	yMin := max(b.Min.Y, sy0-blurRadius)
+	yMax := min(b.Max.Y, sy1+blurRadius)
+	xMin := max(b.Min.X, sx0-blurRadius)
+	xMax := min(b.Max.X, sx1+blurRadius)
+	ix0, ix1 := sx0+cornerR, sx1-1-cornerR
+	iy0, iy1 := sy0+cornerR, sy1-1-cornerR
 	for y := yMin; y < yMax; y++ {
-		dy := max(0, max(sy0-y, y-(sy1-1)))
+		cy := min(max(y, iy0), iy1)
+		dy := float64(y - cy)
 		for x := xMin; x < xMax; x++ {
-			dx := max(0, max(sx0-x, x-(sx1-1)))
-			if d2 := dx*dx + dy*dy; d2 < r2 {
+			cx := min(max(x, ix0), ix1)
+			dx := float64(x - cx)
+			dInner := math.Hypot(dx, dy)
+			d := max(0, dInner-float64(cornerR))
+			if d2 := d * d; d2 < r2 {
 				a := uint8(110 * (r2 - d2) / r2)
 				img.SetRGBA(x, y, color.RGBA{A: a})
+			}
+		}
+	}
+}
+
+func applyCornerMask(img *image.RGBA, winX, winY, winW, winH, r int) {
+	if r <= 0 {
+		return
+	}
+	rf := float64(r)
+	type corner struct {
+		x0, x1 int
+		y0, y1 int
+		cx, cy float64
+	}
+	corners := [4]corner{
+		// Top-left
+		{
+			x0: winX, x1: winX + r,
+			y0: winY, y1: winY + r,
+			cx: float64(winX + r), cy: float64(winY + r),
+		},
+		// Top-right
+		{
+			x0: winX + winW - r, x1: winX + winW,
+			y0: winY, y1: winY + r,
+			cx: float64(winX + winW - r), cy: float64(winY + r),
+		},
+		// Bottom-left
+		{
+			x0: winX, x1: winX + r,
+			y0: winY + winH - r, y1: winY + winH,
+			cx: float64(winX + r), cy: float64(winY + winH - r),
+		},
+		// Bottom-right
+		{
+			x0: winX + winW - r, x1: winX + winW,
+			y0: winY + winH - r, y1: winY + winH,
+			cx: float64(winX + winW - r), cy: float64(winY + winH - r),
+		},
+	}
+
+	for _, c := range corners {
+		for y := c.y0; y < c.y1; y++ {
+			py := float64(y) + 0.5
+			for x := c.x0; x < c.x1; x++ {
+				px := float64(x) + 0.5
+				d := math.Hypot(px-c.cx, py-c.cy) - rf
+				if d > 0.5 {
+					img.SetRGBA(x, y, color.RGBA{})
+				} else if d >= -0.5 {
+					factor := 0.5 - d
+					orig := img.RGBAAt(x, y)
+					img.SetRGBA(x, y, color.RGBA{
+						R: uint8(float64(orig.R)*factor + 0.5),
+						G: uint8(float64(orig.G)*factor + 0.5),
+						B: uint8(float64(orig.B)*factor + 0.5),
+						A: uint8(float64(orig.A)*factor + 0.5),
+					})
+				}
 			}
 		}
 	}

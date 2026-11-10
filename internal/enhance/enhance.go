@@ -28,6 +28,7 @@ type Layout struct {
 	BodyW, BodyH        int
 	WinX, WinY          int
 	WinW, WinH          int
+	Radius              int
 	BodyX, BodyY        int
 	ContentX, ContentY  int
 	TotalW, TotalH      int
@@ -35,7 +36,7 @@ type Layout struct {
 
 // ComputeLayout calculates the pixel geometry for rendering em with the given
 // view constraints and cosmetic Enhancements.
-func ComputeLayout(em emulator.Emulator, skipScrollback bool, cols, rows, padding int, chrome, shadow bool) Layout {
+func ComputeLayout(em emulator.Emulator, skipScrollback bool, cols, rows, padding, radius int, chrome, shadow bool) Layout {
 	sb, c, r := ViewDims(em, skipScrollback, cols, rows)
 	p := max(padding, 0)
 	w, h := c*CellW+2*p, r*CellH+2*p
@@ -49,6 +50,11 @@ func ComputeLayout(em emulator.Emulator, skipScrollback bool, cols, rows, paddin
 		bodyY += ChromeH
 		winH += ChromeH
 	}
+	rad := max(radius, 0)
+	maxR := min(winW/2, winH/2)
+	if rad > maxR {
+		rad = maxR
+	}
 	return Layout{
 		SB:        sb,
 		Cols:      c,
@@ -59,6 +65,7 @@ func ComputeLayout(em emulator.Emulator, skipScrollback bool, cols, rows, paddin
 		WinY:      winY,
 		WinW:      winW,
 		WinH:      winH,
+		Radius:    rad,
 		BodyX:     bodyX,
 		BodyY:     bodyY,
 		ContentX:  bodyX + p,
