@@ -137,7 +137,7 @@ func TestHelpListsFlags(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
 	}
-	for _, f := range []string{"-o", "--theme", "--cols", "--rows", "--font", "--trim", "--crop", "--padding", "--chrome", "--title", "--shadow", "--shell", "-s", "--version", "-v"} {
+	for _, f := range []string{"-o", "--theme", "--cols", "--rows", "--font", "--trim", "--crop", "--padding", "--radius", "--chrome", "--title", "--shadow", "--shell", "-s", "--version", "-v"} {
 		if !strings.Contains(stderr, f) {
 			t.Errorf("help does not mention %s:\n%s", f, stderr)
 		}
@@ -305,6 +305,7 @@ func TestSizingAndErrors(t *testing.T) {
 		{name: "negative crop origin rejected", stdin: "x\n", args: []string{"--crop", "-1,0,2x2"}, wantCode: 2, wantStderr: []string{"--crop"}},
 		{name: "zero crop size rejected", stdin: "x\n", args: []string{"--crop", "0,0,0x2"}, wantCode: 2, wantStderr: []string{"--crop"}},
 		{name: "negative padding rejected", stdin: "x\n", args: []string{"--padding", "-1"}, wantCode: 2, wantStderr: []string{"--padding"}},
+		{name: "negative radius rejected", stdin: "x\n", args: []string{"--radius", "-1"}, wantCode: 2, wantStderr: []string{"ssterm: --radius must be >= 0"}},
 		{name: "unknown flag", stdin: "x\n", args: []string{"--bogus"}, wantCode: 2, wantStderr: []string{"bogus", "Usage:"}},
 		{name: "unknown theme lists names", stdin: "x\n", args: []string{"--theme", "nope"}, wantCode: 2, wantStderr: []string{"nope", "dark"}},
 		{name: "unsupported output extension", stdin: "x\n", args: []string{"-o", "out.jpg"}, wantCode: 2, wantStderr: []string{"ssterm:", ".jpg"}},
@@ -1910,5 +1911,115 @@ func TestUserConfigValidationErrors(t *testing.T) {
 				t.Fatalf("%s: stderr %q does not contain %q", tc.name, stderr, tc.wantError)
 			}
 		})
+	}
+}
+
+func TestRadiusSVG(t *testing.T) {
+	// Radius 8 without chrome or shadow
+	out, stderr, code := run(t, "hello\n", "--radius", "8")
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %q", code, stderr)
+	}
+	if !strings.Contains(out, `<clipPath id="window-clip"><rect x="0" y="0" width="45" height="18" rx="8"/></clipPath>`) {
+		t.Errorf("SVG missing window-clip clipPath with rx=8:\n%s", out)
+	}
+	if !strings.Contains(out, `<g clip-path="url(#window-clip)">`) {
+		t.Errorf("SVG missing clip-path group:\n%s", out)
+	}
+	if strings.Contains(out, "shadow") {
+		t.Errorf("SVG should not contain shadow without --shadow flag:\n%s", out)
+	}
+
+	// Radius 8 with shadow
+	outShadow, stderr, code := run(t, "hello\n", "--radius", "8", "--shadow")
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %q", code, stderr)
+	}
+	if !strings.Contains(outShadow, `<clipPath id="window-clip"><rect x="20" y="20" width="45" height="18" rx="8"/></clipPath>`) {
+		t.Errorf("SVG missing window-clip with shadow offsets:\n%s", outShadow)
+	}
+	if !strings.Contains(outShadow, `<rect x="20" y="24" width="45" height="18" rx="8" fill="#000000" opacity="0.35" filter="url(#shadow)"/>`) {
+		t.Errorf("SVG shadow rect missing rx=8:\n%s", outShadow)
+	}
+
+	// Radius clamping: 2 cols x 1 row -> 18x18 win, maxR = 9
+	outClamp, stderr, code := run(t, "hi\n", "--cols", "2", "--rows", "1", "--radius", "50")
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %q", code, stderr)
+	}
+	if !strings.Contains(outClamp, `rx="9"`) {
+		t.Errorf("SVG radius 50 should clamp to rx=9 for 18x18 window:\n%s", outClamp)
+	}
+
+	// Radius 8 with chrome
+	outChrome, stderr, code := run(t, "hello\n", "--chrome", "--radius", "8")
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %q", code, stderr)
+	}
+	if !strings.Contains(outChrome, `<clipPath id="window-clip"><rect x="0" y="0" width="45" height="50" rx="8"/></clipPath>`) {
+		t.Errorf("SVG chrome+radius missing clipPath with height=50 rx=8:\n%s", outChrome)
+	}
+}
+
+func TestRadiusPNG(t *testing.T) {
+	// Radius 8 without chrome: all 4 corners of the Screen grid body are rounded
+	img, _ := runPNG(t, "hello world\n", "--radius", "8")
+	bounds := img.Bounds()
+	w, h := bounds.Dx(), bounds.Dy()
+	if w != 11*9 || h != 18 {
+		t.Fatalf("PNG size = %dx%d, want 99x18", w, h)
+	}
+
+	corners := []image.Point{
+		{0, 0},         // top-left
+		{w - 1, 0},     // top-right
+		{0, h - 1},     // bottom-left
+		{w - 1, h - 1}, // bottom-right
+	}
+	for _, pt := range corners {
+		c := color.NRGBAModel.Convert(img.At(pt.X, pt.Y)).(color.NRGBA)
+		if c.A == 255 {
+			t.Errorf("PNG corner at %v has alpha %d, want < 255 (transparent/anti-aliased)", pt, c.A)
+		}
+	}
+
+	// Interior pixel must be solid
+	interior := color.NRGBAModel.Convert(img.At(15, 9)).(color.NRGBA)
+	if interior.A != 255 {
+		t.Errorf("PNG interior pixel (15, 9) has alpha %d, want 255", interior.A)
+	}
+
+	// Anti-aliased edge pixel along corner arc should have 0 < alpha < 255
+	edge := color.NRGBAModel.Convert(img.At(0, 7)).(color.NRGBA)
+	if edge.A == 0 || edge.A == 255 {
+		t.Errorf("PNG edge pixel (0, 7) has alpha %d, want 0 < alpha < 255", edge.A)
+	}
+
+	// Radius 8 with Chrome: top corners round Chrome, bottom corners round Screen grid
+	imgChrome, _ := runPNG(t, "hello world\n", "--chrome", "--radius", "8")
+	cw, ch := imgChrome.Bounds().Dx(), imgChrome.Bounds().Dy()
+	chromeCorners := []image.Point{
+		{0, 0},           // top-left
+		{cw - 1, 0},      // top-right
+		{0, ch - 1},      // bottom-left
+		{cw - 1, ch - 1}, // bottom-right
+	}
+	for _, pt := range chromeCorners {
+		c := color.NRGBAModel.Convert(imgChrome.At(pt.X, pt.Y)).(color.NRGBA)
+		if c.A == 255 {
+			t.Errorf("PNG chrome corner at %v has alpha %d, want < 255", pt, c.A)
+		}
+	}
+
+	// Radius 8 with Shadow: window corner pixel (winX, winY) is translucent shadow (< 255), not solid window
+	imgShadow, _ := runPNG(t, "hello world\n", "--radius", "8", "--shadow")
+	winCorner := color.NRGBAModel.Convert(imgShadow.At(20, 20)).(color.NRGBA)
+	if winCorner.A == 255 {
+		t.Errorf("PNG shadow window corner (20, 20) has alpha %d, want < 255", winCorner.A)
+	}
+	// Interior of window with shadow is solid
+	winInterior := color.NRGBAModel.Convert(imgShadow.At(35, 29)).(color.NRGBA)
+	if winInterior.A != 255 {
+		t.Errorf("PNG shadow interior pixel (35, 29) has alpha %d, want 255", winInterior.A)
 	}
 }

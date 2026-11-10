@@ -48,6 +48,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	trim := fs.Bool("trim", false, "trim leading and trailing blank rows and columns")
 	cropSpec := fs.String("crop", "", "crop Screen grid to COL,ROW,WxH")
 	padding := fs.Int("padding", 0, "padding in pixels around the Screen grid")
+	radius := fs.Int("radius", 0, "corner radius in pixels for rounded window corners")
 	chrome := fs.Bool("chrome", false, "draw the Theme's Chrome")
 	title := fs.String("title", "", "window title drawn in Chrome (implies --chrome)")
 	shadow := fs.Bool("shadow", false, "draw a drop shadow around the Screenshot")
@@ -115,6 +116,10 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	if *padding < 0 {
 		fmt.Fprintln(stderr, "ssterm: --padding must be >= 0")
+		return 2
+	}
+	if *radius < 0 {
+		fmt.Fprintln(stderr, "ssterm: --radius must be >= 0")
 		return 2
 	}
 	var cropRect enhance.CropRect
@@ -209,6 +214,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			Cols:           renderCols,
 			Rows:           renderRows,
 			Padding:        *padding,
+			Radius:         *radius,
 			Chrome:         *chrome,
 			Title:          *title,
 			Shadow:         *shadow,
@@ -220,6 +226,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			Cols:           renderCols,
 			Rows:           renderRows,
 			Padding:        *padding,
+			Radius:         *radius,
 			Chrome:         *chrome,
 			Title:          *title,
 			Shadow:         *shadow,
