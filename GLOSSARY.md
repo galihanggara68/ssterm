@@ -33,5 +33,5 @@ The default rendering mode: the screen grid is shown exactly as emulated, with n
 _Avoid_: Raw, as-is
 
 **Enhancement**:
-An opt-in cosmetic change to a screenshot, such as trimming, cropping, padding, window chrome or shadow.
+An opt-in cosmetic change to a screenshot, such as trimming, cropping, padding, window chrome, rounded corners, or shadow.
 _Avoid_: Improvement, beautify, filter
