@@ -54,9 +54,9 @@ git diff --color=always | ssterm --theme windows --chrome --shadow --padding 16 
   - **SVG (default):** Written to `stdout` or `-o file.svg`. Uses run-length encoded `<text>` and `<tspan>` spans so text remains selectable and searchable.
   - **PNG (`-o file.png`):** Pure-Go rasterizer using embedded Go Mono (`gomono`) fonts with automatic Nerd Font / system monospace glyph fallback—no `cgo` required.
 - **Pluggable Themes & User Defaults**
-  - 6 built-in Themes (`dark`, `light`, `macos`, `iterm2`, `gnome`, `windows`), custom JSON Theme files via `--theme path/to/theme.json`, and persistent user defaults in `~/.config/ssterm/config.json`.
+  - 12 built-in Themes (`dark`, `light`, `macos`, `iterm2`, `gnome`, `windows`, `dracula`, `catppuccin-mocha`, `catppuccin-latte`, `tokyo-night`, `nord`, `gruvbox-dark`), custom JSON Theme files via `--theme path/to/theme.json`, and persistent user defaults in `~/.config/ssterm/config.json`.
 - **Opt-In Cosmetic Enhancements**
-  - **Faithful** by default; opt into `--trim`, `--crop`, `--padding`, `--chrome`, `--title`, and `--shadow` when preparing documentation or social Screenshots.
+  - **Faithful** by default; opt into `--trim`, `--crop`, `--padding`, `--radius`, `--chrome`, `--title`, `--shadow`, and `--scale` (PNG HiDPI) when preparing documentation or social Screenshots.
 
 ---
 
@@ -174,6 +174,8 @@ Usage:
 | `--trim` | `bool` | `false` | Strip leading and trailing blank rows and columns around the Screen grid. |
 | `--crop <spec>` | `string` | `""` | Crop the Screen grid to a 0-based cell rectangle (`COL,ROW,WxH`, `WxH+COL+ROW`, or `COL,ROW,W,H`). |
 | `--padding <px>` | `int` | `0` | Add `<px>` pixels (`>= 0`) of Theme background around all four sides of the Screen grid. |
+| `--radius <px>` | `int` | `0` | Corner radius in pixels (`>= 0`) for rounded window corners. |
+| `--scale <n>` | `int` | `1` | HiDPI scale factor (`1` to `5`) for high-resolution PNG Screenshots. |
 | `--chrome` | `bool` | `false` | Draw the Theme's window **Chrome** (title bar and control buttons) above the Screen grid. |
 | `--title <text>` | `string` | `""` | Draw `<text>` centered in the Chrome title bar (automatically enables `--chrome` when non-empty). |
 | `--shadow` | `bool` | `false` | Draw a soft drop shadow around the Screenshot window. |
@@ -206,6 +208,12 @@ Pass any built-in name or alias (case-insensitive; spaces or hyphens accepted) t
 | `iterm2` | `iTerm2` | `#000000` | `#c7c7c7` | `true` | `macos` (left traffic lights) |
 | `gnome` | `gnome-terminal`, `GNOME Terminal` | `#2e3436` | `#d3d7cf` | `false` | `gnome` (right circular buttons) |
 | `windows` | `windows-terminal`, `Windows Terminal` | `#0c0c0c` | `#cccccc` | `true` | `windows` (right minimize/maximize/close) |
+| `dracula` | `dracula` | `#282a36` | `#f8f8f2` | `false` | `macos` (left traffic lights) |
+| `catppuccin-mocha` | `catppuccin-mocha` | `#1e1e2e` | `#cdd6f4` | `false` | `macos` (left traffic lights) |
+| `catppuccin-latte` | `catppuccin-latte` | `#eff1f5` | `#4c4f69` | `false` | `macos` (left traffic lights) |
+| `tokyo-night` | `tokyo-night` | `#1a1b26` | `#c0caf5` | `false` | `macos` (left traffic lights) |
+| `nord` | `nord` | `#2e3440` | `#d8dee9` | `false` | `macos` (left traffic lights) |
+| `gruvbox-dark` | `gruvbox-dark` | `#282828` | `#ebdbb2` | `false` | `macos` (left traffic lights) |
 
 ### Custom JSON Theme File
 
@@ -257,9 +265,11 @@ To avoid repeating your preferred flags on every invocation, create `$XDG_CONFIG
 
 ```json
 {
-  "theme": "macos",
+  "theme": "catppuccin-mocha",
   "font": "JetBrains Mono, ui-monospace, monospace",
   "padding": 16,
+  "radius": 8,
+  "scale": 2,
   "trim": true,
   "chrome": true,
   "shadow": true,
@@ -285,8 +295,10 @@ Enhancements compose in a fixed, predictable pipeline:
    - `COL,ROW,W,H` (e.g. `--crop 2,1,40,10`)
    - Wide 2-column glyphs straddling a crop edge are cleanly replaced with a 1-column space preserving the cell's styling.
 3. **`--padding <px>`:** Expands the Screen grid background by `<px>` pixels on all four sides (`width + 2*px`, `height + 2*px`) and offsets cell rendering by `(px, px)`.
-4. **`--chrome` & `--title <text>`:** Adds a `32px`-tall window title bar above the (optionally padded) Screen grid body using the active Theme's Chrome layout (`macos`, `gnome`, or `windows`). Passing a non-empty `--title` automatically enables Chrome, horizontally centers the title in `chrome.foreground`, and truncates long titles with `…` inside the safe zone between the window buttons so narrow Screenshots never widen.
-5. **`--shadow`:** Surrounds the window (Chrome + Screen grid body) with a `20px` outer margin and renders a translucent drop shadow (`<feDropShadow>` in SVG; alpha-blended falloff in PNG).
+4. **`--radius <px>`:** Rounds outer window corners with a radius of `<px>` pixels (clamped to half window width/height). When Chrome is enabled, top corners clip the title bar while bottom corners clip the Screen grid; when Chrome is disabled, all four corners of the Screen grid body are rounded. When `--shadow` is active, the drop shadow conforms to the rounded corner curve.
+5. **`--chrome` & `--title <text>`:** Adds a `32px`-tall window title bar above the (optionally padded) Screen grid body using the active Theme's Chrome layout (`macos`, `gnome`, or `windows`). Passing a non-empty `--title` automatically enables Chrome, horizontally centers the title in `chrome.foreground`, and truncates long titles with `…` inside the safe zone between the window buttons so narrow Screenshots never widen.
+6. **`--shadow`:** Surrounds the window (Chrome + Screen grid body) with a `20px` outer margin and renders a translucent drop shadow (`<feDropShadow>` in SVG; alpha-blended falloff in PNG).
+7. **`--scale <n>`:** High-resolution factor ($1 \dots 5$, PNG only) that natively rasterizes fonts and scales geometry for crisp Retina/HiDPI output.
 
 ---
 
