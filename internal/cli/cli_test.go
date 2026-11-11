@@ -1930,7 +1930,7 @@ func TestUserConfigValidationErrors(t *testing.T) {
 		{
 			name:      "negative padding",
 			body:      `{"padding": -4}`,
-			wantError: "--padding",
+			wantError: "must be >= 0",
 		},
 		{
 			name:      "wrong type chrome",
@@ -1960,7 +1960,7 @@ func TestUserConfigValidationErrors(t *testing.T) {
 		{
 			name:      "negative radius",
 			body:      `{"radius": -2}`,
-			wantError: "--radius",
+			wantError: "must be >= 0",
 		},
 		{
 			name:      "null scale",
@@ -1980,12 +1980,12 @@ func TestUserConfigValidationErrors(t *testing.T) {
 		{
 			name:      "zero scale",
 			body:      `{"scale": 0}`,
-			wantError: "--scale",
+			wantError: "must be between 1 and 5",
 		},
 		{
 			name:      "out of range scale",
 			body:      `{"scale": 6}`,
-			wantError: "--scale",
+			wantError: "must be between 1 and 5",
 		},
 	}
 

@@ -379,26 +379,40 @@ func loadUserConfig() (userConfig, error) {
 			}
 			*boolFields[k] = &b
 		case k == "padding":
-			var n int
-			if isNull || bytes.ContainsAny(v, `".eE`) || json.Unmarshal(v, &n) != nil {
-				return userConfig{}, fmt.Errorf("config %s: invalid field %q: expected integer", path, k)
+			n, err := parseIntConfig(path, k, v, isNull, 0, 0, false)
+			if err != nil {
+				return userConfig{}, err
 			}
-			cfg.Padding = &n
+			cfg.Padding = n
 		case k == "radius":
-			var n int
-			if isNull || bytes.ContainsAny(v, `".eE`) || json.Unmarshal(v, &n) != nil {
-				return userConfig{}, fmt.Errorf("config %s: invalid field %q: expected integer", path, k)
+			n, err := parseIntConfig(path, k, v, isNull, 0, 0, false)
+			if err != nil {
+				return userConfig{}, err
 			}
-			cfg.Radius = &n
+			cfg.Radius = n
 		case k == "scale":
-			var n int
-			if isNull || bytes.ContainsAny(v, `".eE`) || json.Unmarshal(v, &n) != nil {
-				return userConfig{}, fmt.Errorf("config %s: invalid field %q: expected integer", path, k)
+			n, err := parseIntConfig(path, k, v, isNull, 1, 5, true)
+			if err != nil {
+				return userConfig{}, err
 			}
-			cfg.Scale = &n
+			cfg.Scale = n
 		default:
 			return userConfig{}, fmt.Errorf("config %s: unknown field %q", path, k)
 		}
 	}
 	return cfg, nil
+}
+
+func parseIntConfig(path, k string, v json.RawMessage, isNull bool, min, max int, hasMax bool) (*int, error) {
+	var n int
+	if isNull || bytes.ContainsAny(v, `".eE`) || json.Unmarshal(v, &n) != nil {
+		return nil, fmt.Errorf("config %s: invalid field %q: expected integer", path, k)
+	}
+	if n < min || (hasMax && n > max) {
+		if hasMax {
+			return nil, fmt.Errorf("config %s: invalid field %q: must be between %d and %d", path, k, min, max)
+		}
+		return nil, fmt.Errorf("config %s: invalid field %q: must be >= %d", path, k, min)
+	}
+	return &n, nil
 }

@@ -131,14 +131,14 @@ func ComputeScaledChrome(th theme.Theme, winX, winY, winW, scale int, title stri
 		W:          winW,
 		H:          chromeH,
 	}
-	cMargin := chromeMargin * scale
-	cCellW := CellW * scale
-	if maxCells := (winW - 2*cMargin) / cCellW; title != "" && maxCells >= 1 {
+	scaledMargin := chromeMargin * scale
+	scaledCellW := CellW * scale
+	if maxCells := (winW - 2*scaledMargin) / scaledCellW; title != "" && maxCells >= 1 {
 		fitted, cols := truncateTitle(title, maxCells)
 		if fitted != "" {
 			spec.Title = fitted
 			spec.TitleCols = cols
-			spec.TitleX = winX + (winW-cols*cCellW)/2
+			spec.TitleX = winX + (winW-cols*scaledCellW)/2
 			spec.TitleY = cy + 5*scale
 		}
 	}
