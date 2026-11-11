@@ -34,23 +34,28 @@ type Layout struct {
 	TotalW, TotalH      int
 }
 
-// ComputeLayout calculates the pixel geometry for rendering em with the given
-// view constraints and cosmetic Enhancements.
-func ComputeLayout(em emulator.Emulator, skipScrollback bool, cols, rows, padding, radius int, chrome, shadow bool) Layout {
+// ComputeScaledLayout calculates the pixel geometry for rendering em with the
+// given view constraints, cosmetic Enhancements, and scale factor.
+func ComputeScaledLayout(em emulator.Emulator, skipScrollback bool, cols, rows, padding, radius, scale int, chrome, shadow bool) Layout {
+	if scale < 1 {
+		scale = 1
+	}
 	sb, c, r := ViewDims(em, skipScrollback, cols, rows)
-	p := max(padding, 0)
-	w, h := c*CellW+2*p, r*CellH+2*p
+	p := max(padding, 0) * scale
+	cellW := CellW * scale
+	cellH := CellH * scale
+	w, h := c*cellW+2*p, r*cellH+2*p
 	winX, winY := 0, 0
 	if shadow {
-		winX, winY = ShadowPad, ShadowPad
+		winX, winY = ShadowPad*scale, ShadowPad*scale
 	}
 	bodyX, bodyY := winX, winY
 	winW, winH := w, h
 	if chrome {
-		bodyY += ChromeH
-		winH += ChromeH
+		bodyY += ChromeH * scale
+		winH += ChromeH * scale
 	}
-	rad := max(radius, 0)
+	rad := max(radius, 0) * scale
 	maxR := min(winW/2, winH/2)
 	if rad > maxR {
 		rad = maxR
@@ -75,6 +80,12 @@ func ComputeLayout(em emulator.Emulator, skipScrollback bool, cols, rows, paddin
 	}
 }
 
+// ComputeLayout calculates the pixel geometry for rendering em with the given
+// view constraints and cosmetic Enhancements at 1x scale.
+func ComputeLayout(em emulator.Emulator, skipScrollback bool, cols, rows, padding, radius int, chrome, shadow bool) Layout {
+	return ComputeScaledLayout(em, skipScrollback, cols, rows, padding, radius, 1, chrome, shadow)
+}
+
 // ChromeButton describes a single window control button in Chrome.
 type ChromeButton struct {
 	Circle     bool
@@ -95,9 +106,12 @@ type ChromeSpec struct {
 	Buttons    [3]ChromeButton
 }
 
-// ComputeChrome returns the resolved Chrome geometry for th at window origin
-// (winX, winY) and width winW.
-func ComputeChrome(th theme.Theme, winX, winY, winW int, title string) ChromeSpec {
+// ComputeScaledChrome returns the resolved Chrome geometry for th at window
+// origin (winX, winY), width winW, scaled by scale.
+func ComputeScaledChrome(th theme.Theme, winX, winY, winW, scale int, title string) ChromeSpec {
+	if scale < 1 {
+		scale = 1
+	}
 	c := th.Chrome
 	bg := c.Background
 	if bg == "" {
@@ -107,41 +121,50 @@ func ComputeChrome(th theme.Theme, winX, winY, winW int, title string) ChromeSpe
 	if fg == "" {
 		fg = th.Foreground
 	}
-	cy := winY + ChromeH/2
+	chromeH := ChromeH * scale
+	cy := winY + chromeH/2
 	spec := ChromeSpec{
 		Background: bg,
 		Foreground: fg,
 		X:          winX,
 		Y:          winY,
 		W:          winW,
-		H:          ChromeH,
+		H:          chromeH,
 	}
-	if maxCells := (winW - 2*chromeMargin) / CellW; title != "" && maxCells >= 1 {
+	cMargin := chromeMargin * scale
+	cCellW := CellW * scale
+	if maxCells := (winW - 2*cMargin) / cCellW; title != "" && maxCells >= 1 {
 		fitted, cols := truncateTitle(title, maxCells)
 		if fitted != "" {
 			spec.Title = fitted
 			spec.TitleCols = cols
-			spec.TitleX = winX + (winW-cols*CellW)/2
-			spec.TitleY = cy + 5
+			spec.TitleX = winX + (winW-cols*cCellW)/2
+			spec.TitleY = cy + 5*scale
 		}
 	}
 	switch strings.ToLower(c.Layout) {
 	case "gnome":
-		startX := max(winX+16, winX+winW-56)
+		startX := max(winX+16*scale, winX+winW-56*scale)
 		for i, col := range c.Buttons {
-			spec.Buttons[i] = ChromeButton{Circle: true, CX: startX + i*20, CY: cy, R: 6, Color: col}
+			spec.Buttons[i] = ChromeButton{Circle: true, CX: startX + i*20*scale, CY: cy, R: 6 * scale, Color: col}
 		}
 	case "windows":
-		startX := max(winX+8, winX+winW-64)
-		spec.Buttons[0] = ChromeButton{X: startX, Y: cy - 1, W: 10, H: 2, Color: c.Buttons[0]}
-		spec.Buttons[1] = ChromeButton{X: startX + 20, Y: cy - 5, W: 10, H: 10, Color: c.Buttons[1]}
-		spec.Buttons[2] = ChromeButton{X: startX + 40, Y: cy - 8, W: 16, H: 16, Color: c.Buttons[2]}
+		startX := max(winX+8*scale, winX+winW-64*scale)
+		spec.Buttons[0] = ChromeButton{X: startX, Y: cy - 1*scale, W: 10 * scale, H: 2 * scale, Color: c.Buttons[0]}
+		spec.Buttons[1] = ChromeButton{X: startX + 20*scale, Y: cy - 5*scale, W: 10 * scale, H: 10 * scale, Color: c.Buttons[1]}
+		spec.Buttons[2] = ChromeButton{X: startX + 40*scale, Y: cy - 8*scale, W: 16 * scale, H: 16 * scale, Color: c.Buttons[2]}
 	default:
 		for i, col := range c.Buttons {
-			spec.Buttons[i] = ChromeButton{Circle: true, CX: winX + 16 + i*20, CY: cy, R: 6, Color: col}
+			spec.Buttons[i] = ChromeButton{Circle: true, CX: winX + (16+i*20)*scale, CY: cy, R: 6 * scale, Color: col}
 		}
 	}
 	return spec
+}
+
+// ComputeChrome returns the resolved Chrome geometry for th at window origin
+// (winX, winY) and width winW at 1x scale.
+func ComputeChrome(th theme.Theme, winX, winY, winW int, title string) ChromeSpec {
+	return ComputeScaledChrome(th, winX, winY, winW, 1, title)
 }
 
 func truncateTitle(title string, maxCells int) (string, int) {

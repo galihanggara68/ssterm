@@ -45,6 +45,7 @@ type Options struct {
 	// Padding adds pixels of Theme background around all four sides of the Screen grid.
 	Padding int
 	Radius  int
+	Scale   int
 	Chrome  bool
 	Title   string
 	Shadow  bool
@@ -95,15 +96,18 @@ func primaryFont(idx int) *opentype.Font {
 	}
 }
 
-func newFaceFromFont(f *opentype.Font) (font.Face, error) {
+func newFaceFromFont(f *opentype.Font, scale int) (font.Face, error) {
+	if scale < 1 {
+		scale = 1
+	}
 	return opentype.NewFace(f, &opentype.FaceOptions{
-		Size:    fontSize,
+		Size:    float64(fontSize * scale),
 		DPI:     72,
 		Hinting: font.HintingFull,
 	})
 }
 
-func newFace(bold, italic bool) font.Face {
+func newFace(bold, italic bool, scale int) font.Face {
 	idx := 0
 	if bold {
 		idx |= 1
@@ -111,7 +115,7 @@ func newFace(bold, italic bool) font.Face {
 	if italic {
 		idx |= 2
 	}
-	face, err := newFaceFromFont(primaryFont(idx))
+	face, err := newFaceFromFont(primaryFont(idx), scale)
 	if err != nil {
 		panic(err)
 	}
@@ -227,8 +231,12 @@ func fontPriority(path string) int {
 
 // RenderWithOptions draws the Screen grid using the Theme and Options.
 func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte {
+	scale := opts.Scale
+	if scale < 1 {
+		scale = 1
+	}
 	chromeEnabled := opts.Chrome || opts.Title != ""
-	lay := enhance.ComputeLayout(e, opts.SkipScrollback, opts.Cols, opts.Rows, opts.Padding, opts.Radius, chromeEnabled, opts.Shadow)
+	lay := enhance.ComputeScaledLayout(e, opts.SkipScrollback, opts.Cols, opts.Rows, opts.Padding, opts.Radius, scale, chromeEnabled, opts.Shadow)
 
 	img := image.NewRGBA(image.Rect(0, 0, lay.TotalW, lay.TotalH))
 	defBg := parseHex(th.Background)
@@ -243,16 +251,16 @@ func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte
 
 	var chromeSpec enhance.ChromeSpec
 	if chromeEnabled {
-		chromeSpec = enhance.ComputeChrome(th, lay.WinX, lay.WinY, lay.WinW, opts.Title)
+		chromeSpec = enhance.ComputeScaledChrome(th, lay.WinX, lay.WinY, lay.WinW, scale, opts.Title)
 		drawChrome(winTarget, chromeSpec)
 	}
 	draw.Draw(winTarget, image.Rect(lay.BodyX, lay.BodyY, lay.BodyX+lay.BodyW, lay.BodyY+lay.BodyH), &image.Uniform{C: defBg}, image.Point{}, draw.Src)
 
 	faces := [4]font.Face{
-		newFace(false, false),
-		newFace(true, false),
-		newFace(false, true),
-		newFace(true, true),
+		newFace(false, false, scale),
+		newFace(true, false, scale),
+		newFace(false, true, scale),
+		newFace(true, true, scale),
 	}
 	extraFaces := make(map[*opentype.Font]font.Face)
 	defer func() {
@@ -271,7 +279,7 @@ func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte
 			if fb := findFallbackFont(&sfntBuf, r); fb != nil {
 				fbFace, ok := extraFaces[fb]
 				if !ok {
-					if created, err := newFaceFromFont(fb); err == nil {
+					if created, err := newFaceFromFont(fb, scale); err == nil {
 						fbFace = created
 						extraFaces[fb] = fbFace
 					}
@@ -283,6 +291,9 @@ func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte
 		}
 		return faces[idx]
 	}
+
+	cellW := enhance.CellW * scale
+	cellH := enhance.CellH * scale
 
 	if chromeSpec.Title != "" {
 		titleFg := parseHex(chromeSpec.Foreground)
@@ -305,7 +316,7 @@ func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte
 
 	for row := 0; row < lay.TotalRows; row++ {
 		y0 := lay.ContentY + row*cellH
-		baseline := y0 + cellH - 5
+		baseline := y0 + cellH - 5*scale
 		// Pass 1: draw all non-default cell backgrounds in the row.
 		for col := 0; col < lay.Cols; {
 			c := enhance.CellAt(e, lay.SB, row, col)
@@ -346,13 +357,14 @@ func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte
 				d.DrawString(c.Text)
 			}
 
+			lineThick := max(scale, 1)
 			if c.Attrs&emulator.AttrUnderline != 0 {
-				uy := baseline + 2
-				draw.Draw(winTarget, image.Rect(x0, uy, x0+cw*cellW, uy+1), &image.Uniform{C: fg}, image.Point{}, draw.Src)
+				uy := baseline + 2*scale
+				draw.Draw(winTarget, image.Rect(x0, uy, x0+cw*cellW, uy+lineThick), &image.Uniform{C: fg}, image.Point{}, draw.Src)
 			}
 			if c.Attrs&emulator.AttrStrikethrough != 0 {
 				sy := y0 + cellH/2
-				draw.Draw(winTarget, image.Rect(x0, sy, x0+cw*cellW, sy+1), &image.Uniform{C: fg}, image.Point{}, draw.Src)
+				draw.Draw(winTarget, image.Rect(x0, sy, x0+cw*cellW, sy+lineThick), &image.Uniform{C: fg}, image.Point{}, draw.Src)
 			}
 
 			col += cw
@@ -363,7 +375,7 @@ func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte
 		applyCornerMask(winTarget, lay.WinX, lay.WinY, lay.WinW, lay.WinH, lay.Radius)
 	}
 	if opts.Shadow {
-		drawShadow(img, lay.WinX, lay.WinY, lay.WinW, lay.WinH, lay.Radius)
+		drawShadow(img, lay.WinX, lay.WinY, lay.WinW, lay.WinH, lay.Radius, scale)
 		draw.Draw(img, winTarget.Bounds(), winTarget, winTarget.Bounds().Min, draw.Over)
 	}
 
@@ -372,11 +384,14 @@ func RenderWithOptions(e emulator.Emulator, th theme.Theme, opts Options) []byte
 	return buf.Bytes()
 }
 
-func drawShadow(img *image.RGBA, winX, winY, winW, winH, cornerR int) {
-	const blurRadius = 12
-	const r2 = blurRadius * blurRadius
-	sx0, sy0 := winX, winY+4
-	sx1, sy1 := winX+winW, winY+winH+4
+func drawShadow(img *image.RGBA, winX, winY, winW, winH, cornerR, scale int) {
+	if scale < 1 {
+		scale = 1
+	}
+	blurRadius := 12 * scale
+	r2 := blurRadius * blurRadius
+	sx0, sy0 := winX, winY+4*scale
+	sx1, sy1 := winX+winW, winY+winH+4*scale
 	b := img.Bounds()
 	yMin := max(b.Min.Y, sy0-blurRadius)
 	yMax := min(b.Max.Y, sy1+blurRadius)
@@ -392,8 +407,8 @@ func drawShadow(img *image.RGBA, winX, winY, winW, winH, cornerR int) {
 			dx := float64(x - cx)
 			dInner := math.Hypot(dx, dy)
 			d := max(0, dInner-float64(cornerR))
-			if d2 := d * d; d2 < r2 {
-				a := uint8(110 * (r2 - d2) / r2)
+			if d2 := d * d; float64(d2) < float64(r2) {
+				a := uint8(110 * (float64(r2) - float64(d2)) / float64(r2))
 				img.SetRGBA(x, y, color.RGBA{A: a})
 			}
 		}

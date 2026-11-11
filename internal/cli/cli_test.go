@@ -137,7 +137,7 @@ func TestHelpListsFlags(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
 	}
-	for _, f := range []string{"-o", "--theme", "--cols", "--rows", "--font", "--trim", "--crop", "--padding", "--radius", "--chrome", "--title", "--shadow", "--shell", "-s", "--version", "-v"} {
+	for _, f := range []string{"-o", "--theme", "--cols", "--rows", "--font", "--trim", "--crop", "--padding", "--radius", "--scale", "--chrome", "--title", "--shadow", "--shell", "-s", "--version", "-v"} {
 		if !strings.Contains(stderr, f) {
 			t.Errorf("help does not mention %s:\n%s", f, stderr)
 		}
@@ -1829,6 +1829,58 @@ func TestUserConfigDefaultsAndCLIOverridePrecedence(t *testing.T) {
 			}
 		}
 	}
+
+	// 5. "radius" and "scale" in config.json apply as defaults, bypassed for SVG pipe, and overridden by CLI flags.
+	scaleRadiusCfg := filepath.Join(t.TempDir(), "scale-radius-config.json")
+	if err := os.WriteFile(scaleRadiusCfg, []byte(`{"radius": 8, "scale": 2}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SSTERM_CONFIG", scaleRadiusCfg)
+
+	// SVG output via stdout: should succeed cleanly without triggering --scale SVG error, and radius=8 is applied.
+	svgOut, svgErr, svgCode := run(t, "hi\n")
+	if svgCode != 0 {
+		t.Fatalf("config with scale+radius on SVG stdout: code=%d stderr=%q", svgCode, svgErr)
+	}
+	if !strings.Contains(svgOut, `<clipPath id="window-clip"><rect x="0" y="0" width="18" height="18" rx="8"/></clipPath>`) {
+		t.Fatalf("expected SVG to apply config radius=8:\n%s", svgOut)
+	}
+
+	// PNG output via -o out.png: should apply both radius=8 and scale=2 (width = 18*2 = 36).
+	pngPath := filepath.Join(t.TempDir(), "cfg-scale.png")
+	_, pngErr, pngCode := run(t, "hi\n", "-o", pngPath)
+	if pngCode != 0 {
+		t.Fatalf("config with scale+radius on PNG: code=%d stderr=%q", pngCode, pngErr)
+	}
+	pngData, err := os.ReadFile(pngPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfgImg, err := png.Decode(bytes.NewReader(pngData))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfgImg.Bounds().Dx() != 18*2 || cfgImg.Bounds().Dy() != 18*2 {
+		t.Fatalf("expected 2x PNG dimensions 36x36, got %dx%d", cfgImg.Bounds().Dx(), cfgImg.Bounds().Dy())
+	}
+
+	// CLI override: --radius 0 disables radius, --scale 1 overrides scale to 1x.
+	pngPath1x := filepath.Join(t.TempDir(), "cfg-scale-override.png")
+	_, _, code = run(t, "hi\n", "-o", pngPath1x, "--radius", "0", "--scale", "1")
+	if code != 0 {
+		t.Fatalf("CLI override code=%d", code)
+	}
+	pngData1x, err := os.ReadFile(pngPath1x)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfgImg1x, err := png.Decode(bytes.NewReader(pngData1x))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfgImg1x.Bounds().Dx() != 18 || cfgImg1x.Bounds().Dy() != 18 {
+		t.Fatalf("expected 1x PNG dimensions 18x18, got %dx%d", cfgImg1x.Bounds().Dx(), cfgImg1x.Bounds().Dy())
+	}
 }
 
 func TestUserConfigValidationErrors(t *testing.T) {
@@ -1889,6 +1941,51 @@ func TestUserConfigValidationErrors(t *testing.T) {
 			name:      "unknown theme value",
 			body:      `{"theme": "no-such-theme"}`,
 			wantError: "no-such-theme",
+		},
+		{
+			name:      "null radius",
+			body:      `{"radius": null}`,
+			wantError: "radius",
+		},
+		{
+			name:      "wrong type radius",
+			body:      `{"radius": "8"}`,
+			wantError: "radius",
+		},
+		{
+			name:      "float radius",
+			body:      `{"radius": 8.5}`,
+			wantError: "radius",
+		},
+		{
+			name:      "negative radius",
+			body:      `{"radius": -2}`,
+			wantError: "--radius",
+		},
+		{
+			name:      "null scale",
+			body:      `{"scale": null}`,
+			wantError: "scale",
+		},
+		{
+			name:      "wrong type scale",
+			body:      `{"scale": "2"}`,
+			wantError: "scale",
+		},
+		{
+			name:      "float scale",
+			body:      `{"scale": 2.5}`,
+			wantError: "scale",
+		},
+		{
+			name:      "zero scale",
+			body:      `{"scale": 0}`,
+			wantError: "--scale",
+		},
+		{
+			name:      "out of range scale",
+			body:      `{"scale": 6}`,
+			wantError: "--scale",
 		},
 	}
 
@@ -2029,5 +2126,78 @@ func TestRadiusPNG(t *testing.T) {
 	winInterior := color.NRGBAModel.Convert(imgShadow.At(35, 29)).(color.NRGBA)
 	if winInterior.A != 255 {
 		t.Errorf("PNG shadow interior pixel (35, 29) has alpha %d, want 255", winInterior.A)
+	}
+}
+
+func TestScalePNGValidationAndRendering(t *testing.T) {
+	// Validation: scale outside 1..5 rejected
+	for _, sc := range []string{"0", "-1", "6", "10"} {
+		_, stderr, code := run(t, "hi\n", "--scale", sc)
+		if code != 2 {
+			t.Errorf("scale %s exit code = %d, want 2", sc, code)
+		}
+		if !strings.Contains(stderr, "ssterm: --scale must be between 1 and 5") {
+			t.Errorf("scale %s stderr %q missing expected error", sc, stderr)
+		}
+	}
+
+	// Validation: --scale rejected on SVG output (stdout)
+	_, stderr, code := run(t, "hi\n", "--scale", "2")
+	if code != 2 {
+		t.Fatalf("scale on SVG stdout exit code = %d, want 2", code)
+	}
+	if !strings.Contains(stderr, "ssterm: --scale is only supported for PNG output (-o *.png)") {
+		t.Errorf("scale on SVG stdout stderr = %q, want unsupported error", stderr)
+	}
+
+	// Validation: --scale rejected on -o file.svg
+	svgPath := filepath.Join(t.TempDir(), "out.svg")
+	_, stderr, code = run(t, "hi\n", "-o", svgPath, "--scale", "2")
+	if code != 2 {
+		t.Fatalf("scale on -o file.svg exit code = %d, want 2", code)
+	}
+	if !strings.Contains(stderr, "ssterm: --scale is only supported for PNG output (-o *.png)") {
+		t.Errorf("scale on -o file.svg stderr = %q, want unsupported error", stderr)
+	}
+
+	// Rendering: 1x vs 2x vs 3x PNG dimensions
+	img1, _ := runPNG(t, "hello\n")
+	w1, h1 := img1.Bounds().Dx(), img1.Bounds().Dy()
+	if w1 != 5*9 || h1 != 18 {
+		t.Fatalf("1x PNG size = %dx%d, want 45x18", w1, h1)
+	}
+
+	img2, _ := runPNG(t, "hello\n", "--scale", "2")
+	w2, h2 := img2.Bounds().Dx(), img2.Bounds().Dy()
+	if w2 != w1*2 || h2 != h1*2 {
+		t.Errorf("2x PNG size = %dx%d, want %dx%d", w2, h2, w1*2, h1*2)
+	}
+
+	img3, _ := runPNG(t, "hello\n", "--scale", "3")
+	w3, h3 := img3.Bounds().Dx(), img3.Bounds().Dy()
+	if w3 != w1*3 || h3 != h1*3 {
+		t.Errorf("3x PNG size = %dx%d, want %dx%d", w3, h3, w1*3, h1*3)
+	}
+
+	// Scaled rendering with Chrome, Shadow, Padding, and Radius
+	imgComplex1, _ := runPNG(t, "hello world\n", "--chrome", "--shadow", "--padding", "10", "--radius", "8")
+	cw1, ch1 := imgComplex1.Bounds().Dx(), imgComplex1.Bounds().Dy()
+
+	imgComplex2, _ := runPNG(t, "hello world\n", "--chrome", "--shadow", "--padding", "10", "--radius", "8", "--scale", "2")
+	cw2, ch2 := imgComplex2.Bounds().Dx(), imgComplex2.Bounds().Dy()
+	if cw2 != cw1*2 || ch2 != ch1*2 {
+		t.Errorf("Complex 2x PNG size = %dx%d, want %dx%d", cw2, ch2, cw1*2, ch1*2)
+	}
+
+	// Scaled corner transparency check on 2x
+	winX2, winY2 := 20*2, 20*2
+	cornerPixel := color.NRGBAModel.Convert(imgComplex2.At(winX2, winY2)).(color.NRGBA)
+	if cornerPixel.A == 255 {
+		t.Errorf("2x PNG scaled corner at (%d, %d) has alpha %d, want < 255", winX2, winY2, cornerPixel.A)
+	}
+	// Interior pixel must be solid
+	interiorPixel := color.NRGBAModel.Convert(imgComplex2.At(winX2+30, winY2+30)).(color.NRGBA)
+	if interiorPixel.A != 255 {
+		t.Errorf("2x PNG scaled interior at (%d, %d) has alpha %d, want 255", winX2+30, winY2+30, interiorPixel.A)
 	}
 }

@@ -49,6 +49,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	cropSpec := fs.String("crop", "", "crop Screen grid to COL,ROW,WxH")
 	padding := fs.Int("padding", 0, "padding in pixels around the Screen grid")
 	radius := fs.Int("radius", 0, "corner radius in pixels for rounded window corners")
+	scale := fs.Int("scale", 1, "scale factor for PNG output (1 to 5)")
 	chrome := fs.Bool("chrome", false, "draw the Theme's Chrome")
 	title := fs.String("title", "", "window title drawn in Chrome (implies --chrome)")
 	shadow := fs.Bool("shadow", false, "draw a drop shadow around the Screenshot")
@@ -92,6 +93,12 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if cfg.Padding != nil && !setFlags["padding"] {
 		*padding = *cfg.Padding
 	}
+	if cfg.Radius != nil && !setFlags["radius"] {
+		*radius = *cfg.Radius
+	}
+	if cfg.Scale != nil && !setFlags["scale"] {
+		*scale = *cfg.Scale
+	}
 	if cfg.Trim != nil && !setFlags["trim"] {
 		*trim = *cfg.Trim
 	}
@@ -120,6 +127,15 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	if *radius < 0 {
 		fmt.Fprintln(stderr, "ssterm: --radius must be >= 0")
+		return 2
+	}
+	if *scale < 1 || *scale > 5 {
+		fmt.Fprintln(stderr, "ssterm: --scale must be between 1 and 5")
+		return 2
+	}
+	isPNG := strings.HasSuffix(strings.ToLower(*output), ".png")
+	if !isPNG && setFlags["scale"] {
+		fmt.Fprintln(stderr, "ssterm: --scale is only supported for PNG output (-o *.png)")
 		return 2
 	}
 	var cropRect enhance.CropRect
@@ -215,6 +231,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			Rows:           renderRows,
 			Padding:        *padding,
 			Radius:         *radius,
+			Scale:          *scale,
 			Chrome:         *chrome,
 			Title:          *title,
 			Shadow:         *shadow,
@@ -297,6 +314,8 @@ type userConfig struct {
 	Theme   *string
 	Font    *string
 	Padding *int
+	Radius  *int
+	Scale   *int
 	Trim    *bool
 	Chrome  *bool
 	Shadow  *bool
@@ -365,6 +384,18 @@ func loadUserConfig() (userConfig, error) {
 				return userConfig{}, fmt.Errorf("config %s: invalid field %q: expected integer", path, k)
 			}
 			cfg.Padding = &n
+		case k == "radius":
+			var n int
+			if isNull || bytes.ContainsAny(v, `".eE`) || json.Unmarshal(v, &n) != nil {
+				return userConfig{}, fmt.Errorf("config %s: invalid field %q: expected integer", path, k)
+			}
+			cfg.Radius = &n
+		case k == "scale":
+			var n int
+			if isNull || bytes.ContainsAny(v, `".eE`) || json.Unmarshal(v, &n) != nil {
+				return userConfig{}, fmt.Errorf("config %s: invalid field %q: expected integer", path, k)
+			}
+			cfg.Scale = &n
 		default:
 			return userConfig{}, fmt.Errorf("config %s: unknown field %q", path, k)
 		}
